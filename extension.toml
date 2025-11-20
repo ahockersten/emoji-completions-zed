@@ -5,3 +5,7 @@ schema_version = 1
 authors = ["Anders Höckersten <anders@hockersten.se>"]
 description = "Adds the ability to complete emojis by typing ':' followed by the emoji name."
 repository = "https://github.com/ahockersten/emoji-completions-zed"
+
+[language_servers.emoji-language-server]
+name = "Emoji Language Server"
+languages = ["Markdown", "Plain Text", "JSON", "YAML", "TOML", "Rust", "JavaScript", "TypeScript", "Python", "Go", "C", "C++", "Java", "HTML", "CSS"]
