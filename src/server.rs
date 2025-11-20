@@ -279,7 +279,6 @@ fn main() {
             }
         }
 
-        // Get content length
         let content_length: usize = match header_map.get("Content-Length") {
             Some(len_str) => match len_str.parse() {
                 Ok(len) => len,
@@ -288,13 +287,11 @@ fn main() {
             None => continue,
         };
 
-        // Read content
         let mut content = vec![0u8; content_length];
         if stdin.read_exact(&mut content).is_err() {
             return;
         }
 
-        // Parse JSON
         let content_str = String::from_utf8_lossy(&content);
         if let Ok(request) = serde_json::from_str::<JsonRpcRequest>(&content_str) {
             if let Some(response) = server.handle_message(request) {
