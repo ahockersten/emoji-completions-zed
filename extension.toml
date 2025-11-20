@@ -8,4 +8,4 @@ repository = "https://github.com/ahockersten/emoji-completions-zed"
 
 [language_servers.emoji-language-server]
 name = "Emoji Language Server"
-languages = ["Markdown", "Plain Text", "JSON", "YAML", "TOML", "Rust", "JavaScript", "TypeScript", "Python", "Go", "C", "C++", "Java", "HTML", "CSS"]
+languages = ["Markdown", "Plain Text", "JSON", "YAML", "TOML", "Rust", "JavaScript", "TypeScript", "Python", "Go", "C", "C++", "Java", "HTML", "CSS", "XML", "SQL", "Shell", "Bash", "PHP", "Ruby", "Swift", "Kotlin", "Scala", "Perl", "R", "Lua", "Clojure", "Elixir", "Erlang", "Haskell", "Objective-C", "Dart", "Groovy", "Gradle", "Maven", "Docker", "Dockerfile", "Makefile", "CMake", "Vim", "Git", "Diff", "Patch", "VB.Net", "C#", "F#", "Verilog", "VHDL"]
