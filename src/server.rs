@@ -214,12 +214,19 @@ impl Server {
                     format!(":{} {}", name, emoji_char)
                 };
 
+                // Use both shortcode and name for filtering so it matches on either
+                let filter_text = if let Some(code) = shortcode {
+                    format!("{} {}", code, name)
+                } else {
+                    name.to_string()
+                };
+
                 let completion_item = json!({
                     "label": label,
                     "kind": 1, // Text
                     "detail": name,
                     "insertText": emoji_char,
-                    "filterText": shortcode.unwrap_or(name),
+                    "filterText": filter_text,
                     "sortText": format!("{:06}", completions.len()),
                     "textEdit": {
                         "range": {
