@@ -215,11 +215,7 @@ impl Server {
                 };
 
                 // Use both shortcode and name for filtering so it matches on either
-                let filter_text = if let Some(code) = shortcode {
-                    format!("{} {}", code, name)
-                } else {
-                    name.to_string()
-                };
+                let filter_text = format!("{} {}", shortcode.unwrap_or(name), name);
 
                 let completion_item = json!({
                     "label": label,
