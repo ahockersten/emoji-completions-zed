@@ -1,4 +1,4 @@
-use zed_extension_api::{self as zed, Result};
+use zed_extension_api as zed;
 
 struct EmojiCompletionsExtension;
 
@@ -11,13 +11,17 @@ impl zed::Extension for EmojiCompletionsExtension {
         &mut self,
         _language_server_id: &zed::LanguageServerId,
         _worktree: &zed::Worktree,
-    ) -> Result<zed::Command> {
-        let server_path = "emoji-language-server/server.mjs";
-        let node_path = zed::node_binary_path()?;
-
+    ) -> zed::Result<zed::Command> {
+        // The emoji-language-server binary should be in the same directory as this extension
+        // After installation via install.sh, it will be at:
+        // ~/.config/zed/extensions/emoji-completions/emoji-language-server
+        //
+        // Zed will resolve the command name by searching in:
+        // 1. The extension directory
+        // 2. The system PATH
         Ok(zed::Command {
-            command: node_path,
-            args: vec![server_path.to_string(), "--stdio".to_string()],
+            command: "emoji-language-server".to_string(),
+            args: vec![],
             env: Default::default(),
         })
     }
