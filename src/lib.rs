@@ -1,6 +1,8 @@
 use std::fs;
 use zed_extension_api::{self as zed, settings::LspSettings, LanguageServerId, Result};
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 struct EmojiCompletionsExtension {
     cached_binary_path: Option<String>,
 }
@@ -61,13 +63,8 @@ impl EmojiCompletionsExtension {
             &zed::LanguageServerInstallationStatus::CheckingForUpdate,
         );
 
-        let release = zed::latest_github_release(
-            "ahockersten/emoji-completions-zed",
-            zed::GithubReleaseOptions {
-                require_assets: true,
-                pre_release: false,
-            },
-        )?;
+        let release =
+            zed::github_release_by_tag_name("ahockersten/emoji-completions-zed", VERSION)?;
 
         let arch_str: &str = match arch {
             zed::Architecture::Aarch64 => "aarch64",
