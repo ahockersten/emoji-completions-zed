@@ -93,8 +93,7 @@ impl EmojiCompletionsExtension {
             release.version, asset_name
         );
 
-        let version_dir = format!("emoji-language-server-{}", release.version);
-        let binary_path = format!("{}/{}", version_dir, asset_name);
+        let binary_path = asset_name.clone();
 
         if !fs::metadata(&binary_path).map_or(false, |stat| stat.is_file()) {
             zed::set_language_server_installation_status(
@@ -104,21 +103,12 @@ impl EmojiCompletionsExtension {
 
             zed::download_file(
                 &download_url,
-                &version_dir,
+                &binary_path,
                 zed::DownloadedFileType::Uncompressed,
             )
             .map_err(|e| format!("failed to download file: {e}"))?;
 
             zed::make_file_executable(&binary_path)?;
-
-            let entries =
-                fs::read_dir(".").map_err(|e| format!("failed to list working directory {e}"))?;
-            for entry in entries {
-                let entry = entry.map_err(|e| format!("failed to load directory entry {e}"))?;
-                if entry.file_name().to_str() != Some(&version_dir) {
-                    fs::remove_dir_all(entry.path()).ok();
-                }
-            }
         }
 
         self.cached_binary_path = Some(binary_path.clone());
