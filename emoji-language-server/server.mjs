@@ -7,18 +7,15 @@ import {
 } from 'vscode-languageserver';
 
 import { TextDocument } from 'vscode-languageserver-textdocument';
+import emojiData from 'emojibase-data/en/data.json' with { type: 'json' };
 
 const connection = createConnection(ProposedFeatures.all, process.stdin, process.stdout);
 
 const documents = new TextDocuments(TextDocument);
 
-const EMOJI_DATA = [
-  { name: 'sad', emoji: '😢', description: 'Crying face' },
-  { name: 'sad', emoji: '😞', description: 'Disappointed face' },
-  { name: 'sad', emoji: '😔', description: 'Pensive face' },
-];
-
 connection.onInitialize((params) => {
+  connection.console.log(`Loaded ${emojiData.length} emojis from emojibase`);
+
   return {
     capabilities: {
       textDocumentSync: TextDocumentSyncKind.Incremental,
@@ -53,27 +50,33 @@ connection.onCompletion((textDocumentPosition) => {
   // Get the text after the colon
   const query = text.substring(start + 1, offset).toLowerCase();
 
-  // If the query is empty, return all emojis
-  // Otherwise filter by emojis that match the query
-  const filteredEmojis = EMOJI_DATA.filter((emoji) => {
-    return emoji.name.includes(query) || emoji.description.toLowerCase().includes(query);
+  // Only return emojis that match the query
+  if (!query) {
+    return [];
+  }
+
+  const filteredEmojis = emojiData.filter((item) => {
+    const matchesLabel = item.label.toLowerCase().includes(query);
+    const matchesTags = item.tags && item.tags.some((tag) => tag.toLowerCase().includes(query));
+    const matchesShortcodes = item.shortcodes && item.shortcodes.some((code) => code.toLowerCase().includes(query));
+    return matchesLabel || matchesTags || matchesShortcodes;
   });
 
   // Convert to completion items
-  return filteredEmojis.map((emoji, index) => ({
-    label: `:${emoji.name}: ${emoji.emoji}`,
+  return filteredEmojis.map((item, index) => ({
+    label: `:${item.shortcodes?.[0] || item.label}: ${item.emoji}`,
     kind: CompletionItemKind.Text,
-    detail: emoji.description,
-    insertText: emoji.emoji,
-    filterText: `:${emoji.name}`,
-    sortText: `${index.toString().padStart(5, '0')}`,
+    detail: item.label,
+    insertText: item.emoji,
+    filterText: item.label,
+    sortText: `${(item.order || 999999).toString().padStart(6, '0')}`,
     // Replace from the colon to current position
     textEdit: {
       range: {
         start: document.positionAt(start),
         end: textDocumentPosition.position,
       },
-      newText: emoji.emoji,
+      newText: item.emoji,
     },
   }));
 });

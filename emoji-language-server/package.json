@@ -7,10 +7,11 @@
     "start": "node server.mjs"
   },
   "dependencies": {
+    "emojibase-data": "^17.0.0",
     "vscode-languageserver": "^9.0.1",
     "vscode-languageserver-textdocument": "^1.0.11"
   },
   "engines": {
-    "node": ">=16.0.0"
+    "node": ">=25.0.0"
   }
 }
