@@ -4,7 +4,7 @@
   "description": "Language server for emoji completions in Zed",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.mjs"
   },
   "dependencies": {
     "vscode-languageserver": "^9.0.1",

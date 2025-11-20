@@ -1,22 +1,17 @@
-#!/usr/bin/env node
-
-const {
+import {
   createConnection,
   TextDocuments,
   ProposedFeatures,
   TextDocumentSyncKind,
   CompletionItemKind,
-} = require('vscode-languageserver/node');
+} from 'vscode-languageserver';
 
-const { TextDocument } = require('vscode-languageserver-textdocument');
+import { TextDocument } from 'vscode-languageserver-textdocument';
 
-// Create a connection for the server using stdio
 const connection = createConnection(ProposedFeatures.all, process.stdin, process.stdout);
 
-// Create a simple text document manager
 const documents = new TextDocuments(TextDocument);
 
-// Emoji data - for now just one example as requested
 const EMOJI_DATA = [
   { name: 'sad', emoji: '😢', description: 'Crying face' },
   { name: 'sad', emoji: '😞', description: 'Disappointed face' },

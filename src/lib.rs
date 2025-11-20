@@ -14,7 +14,7 @@ impl zed::Extension for EmojiCompletionsExtension {
     ) -> Result<zed::Command> {
         // The language server is bundled with the extension
         // Paths are relative to the extension's directory
-        let server_path = "emoji-language-server/server.js";
+        let server_path = "emoji-language-server/server.mjs";
 
         let node_path = zed::node_binary_path()?;
 
