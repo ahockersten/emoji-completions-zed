@@ -200,16 +200,16 @@ impl Server {
         for emoji in emojis::iter() {
             let emoji_char = emoji.as_str();
             let name = emoji.name();
-            let shortcodes: Vec<&str> = emoji.shortcodes().collect();
+            let shortcode = emoji.shortcode();
 
             let matches_name = name.to_lowercase().contains(&query);
-            let matches_shortcode = shortcodes
-                .iter()
-                .any(|code| code.to_lowercase().contains(&query));
+            let matches_shortcode = shortcode
+                .map(|code| code.to_lowercase().contains(&query))
+                .unwrap_or(false);
 
             if matches_name || matches_shortcode {
-                let label = if let Some(first_code) = shortcodes.first() {
-                    format!(":{} {}", first_code, emoji_char)
+                let label = if let Some(code) = shortcode {
+                    format!(":{} {}", code, emoji_char)
                 } else {
                     format!(":{} {}", name, emoji_char)
                 };
@@ -219,7 +219,7 @@ impl Server {
                     "kind": 1, // Text
                     "detail": name,
                     "insertText": emoji_char,
-                    "filterText": name,
+                    "filterText": shortcode.unwrap_or(name),
                     "sortText": format!("{:06}", completions.len()),
                     "textEdit": {
                         "range": {
