@@ -1,0 +1,7 @@
+id = "emoji-completions"
+name = "Emoji completions"
+version = "0.0.1"
+schema_version = 1
+authors = ["Anders Höckersten <anders@hockersten.se>"]
+description = "Adds the ability to complete emojis by typing ':' followed by the emoji name."
+repository = "https://github.com/ahockersten/emoji-completions-zed"
