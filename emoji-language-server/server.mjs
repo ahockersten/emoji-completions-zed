@@ -43,14 +43,13 @@ connection.onCompletion((textDocumentPosition) => {
   }
 
   // If we didn't find a colon, or it's too far back, return no completions
-  if (start < 0 || offset - start > 50) {
+  if (start < 0 || offset - start > 100) {
     return [];
   }
 
-  // Get the text after the colon
   const query = text.substring(start + 1, offset).toLowerCase();
 
-  // Only return emojis that match the query
+  // ignore empty queries, we would suggest too many emojis
   if (!query) {
     return [];
   }
@@ -62,7 +61,6 @@ connection.onCompletion((textDocumentPosition) => {
     return matchesLabel || matchesTags || matchesShortcodes;
   });
 
-  // Convert to completion items
   return filteredEmojis.map((item, index) => ({
     label: `:${item.shortcodes?.[0] || item.label} ${item.emoji}`,
     kind: CompletionItemKind.Text,
@@ -81,10 +79,7 @@ connection.onCompletion((textDocumentPosition) => {
   }));
 });
 
-// Make the text document manager listen on the connection
 documents.listen(connection);
-
-// Listen on the connection
 connection.listen();
 
 connection.console.log('Emoji Language Server started');
