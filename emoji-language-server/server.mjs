@@ -64,7 +64,7 @@ connection.onCompletion((textDocumentPosition) => {
 
   // Convert to completion items
   return filteredEmojis.map((item, index) => ({
-    label: `:${item.shortcodes?.[0] || item.label}: ${item.emoji}`,
+    label: `:${item.shortcodes?.[0] || item.label} ${item.emoji}`,
     kind: CompletionItemKind.Text,
     detail: item.label,
     insertText: item.emoji,
