@@ -102,8 +102,12 @@ impl EmojiCompletionsExtension {
                 &zed::LanguageServerInstallationStatus::Downloading,
             );
 
-            zed::download_file(&download_url, &version_dir, zed::DownloadedFileType::Gzip)
-                .map_err(|e| format!("failed to download file: {e}"))?;
+            zed::download_file(
+                &download_url,
+                &version_dir,
+                zed::DownloadedFileType::Uncompressed,
+            )
+            .map_err(|e| format!("failed to download file: {e}"))?;
 
             zed::make_file_executable(&binary_path)?;
 

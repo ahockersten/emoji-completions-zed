@@ -54,22 +54,19 @@ jobs:
           fi
         shell: bash
 
-      - name: Create release artifact
-        run: |
-          mkdir -p release_artifacts
-          if [ "${{ matrix.os_name }}" = "windows" ]; then
-            cp target/${{ matrix.target }}/release/emoji-language-server.exe release_artifacts/emoji-language-server-${{ matrix.os_name }}-${{ matrix.arch }}.exe
-          else
-            cp target/${{ matrix.target }}/release/emoji-language-server release_artifacts/emoji-language-server-${{ matrix.os_name }}-${{ matrix.arch }}
-          fi
-        shell: bash
-
-      - name: Compress artifact (Unix)
+      - name: Copy binary (Unix)
         if: matrix.os_name != 'windows'
         run: |
-          cd release_artifacts
-          gzip emoji-language-server-${{ matrix.os_name }}-${{ matrix.arch }}
+          mkdir -p release_artifacts
+          cp target/${{ matrix.target }}/release/emoji-language-server release_artifacts/emoji-language-server-${{ matrix.os_name }}-${{ matrix.arch }}
         shell: bash
+
+      - name: Copy binary (Windows)
+        if: matrix.os_name == 'windows'
+        run: |
+          mkdir -p release_artifacts
+          copy target\${{ matrix.target }}\release\emoji-language-server.exe release_artifacts\emoji-language-server-${{ matrix.os_name }}-${{ matrix.arch }}.exe
+        shell: cmd
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
