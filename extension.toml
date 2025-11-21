@@ -1,6 +1,6 @@
 id = "emoji-completions"
 name = "Emoji completions"
-version = "1.0.1"
+version = "1.0.2"
 schema_version = 1
 authors = ["Anders Höckersten <anders@hockersten.se>"]
 description = "Adds the ability to complete emojis by typing ':' followed by the emoji name."
