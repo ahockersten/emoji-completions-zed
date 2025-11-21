@@ -167,22 +167,21 @@ impl Server {
             });
         }
 
-        // Find the colon backwards from current position
-        let mut start = character;
-        while start > 0 && line_text.as_bytes()[start - 1] != b':' {
-            start -= 1;
-        }
+        // Find the closest colon before the cursor
+        let colon_pos = match line_text[..character].rfind(':') {
+            Some(pos) => pos,
+            None => {
+                return Some(JsonRpcResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id: request.id.clone(),
+                    result: Some(json!([])),
+                    error: None,
+                });
+            }
+        };
 
-        if start == 0 || line_text.as_bytes()[start - 1] != b':' {
-            return Some(JsonRpcResponse {
-                jsonrpc: "2.0".to_string(),
-                id: request.id.clone(),
-                result: Some(json!([])),
-                error: None,
-            });
-        }
-
-        let query = line_text[start..character].to_lowercase();
+        let query = line_text[colon_pos + 1..character].to_lowercase();
+        let start = colon_pos + 1;
 
         // Don't suggest if query is empty
         if query.is_empty() {
