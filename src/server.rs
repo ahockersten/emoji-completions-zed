@@ -4,6 +4,41 @@ use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::sync::{Arc, Mutex};
 
+// Convert UTF-16 code unit offset to UTF-8 byte offset
+fn utf16_offset_to_utf8(s: &str, utf16_offset: usize) -> usize {
+    let mut byte_pos = 0;
+    let mut utf16_count = 0;
+
+    for ch in s.chars() {
+        if utf16_count >= utf16_offset {
+            break;
+        }
+        // Each char contributes 1 or 2 UTF-16 code units
+        let utf16_units = if ch as u32 > 0xFFFF { 2 } else { 1 };
+        utf16_count += utf16_units;
+        byte_pos += ch.len_utf8();
+    }
+
+    byte_pos
+}
+
+// Convert UTF-8 byte offset to UTF-16 code unit offset
+fn utf8_offset_to_utf16(s: &str, byte_offset: usize) -> usize {
+    let mut utf16_count = 0;
+    let mut current_byte = 0;
+
+    for ch in s.chars() {
+        if current_byte >= byte_offset {
+            break;
+        }
+        current_byte += ch.len_utf8();
+        let utf16_units = if ch as u32 > 0xFFFF { 2 } else { 1 };
+        utf16_count += utf16_units;
+    }
+
+    utf16_count
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct JsonRpcRequest {
     jsonrpc: String,
@@ -117,7 +152,87 @@ impl Server {
                     let mut docs = self.documents.lock().unwrap();
                     if let Some(change) = changes.first() {
                         if let Some(text) = change.get("text").and_then(|t| t.as_str()) {
-                            docs.insert(uri.to_string(), text.to_string());
+                            if let Some(range) = change.get("range") {
+                                // Incremental change - apply the text to the specified range
+                                if let Some(doc) = docs.get_mut(uri) {
+                                    if let (Some(start), Some(end)) =
+                                        (range.get("start"), range.get("end"))
+                                    {
+                                        if let (
+                                            Some(start_line),
+                                            Some(start_char),
+                                            Some(end_line),
+                                            Some(end_char),
+                                        ) = (
+                                            start.get("line").and_then(|l| l.as_u64()),
+                                            start.get("character").and_then(|c| c.as_u64()),
+                                            end.get("line").and_then(|l| l.as_u64()),
+                                            end.get("character").and_then(|c| c.as_u64()),
+                                        ) {
+                                            let lines: Vec<&str> = doc.lines().collect();
+                                            let start_line_idx = start_line as usize;
+                                            let end_line_idx = end_line as usize;
+
+                                            if start_line_idx < lines.len()
+                                                && end_line_idx < lines.len()
+                                            {
+                                                let mut new_doc = String::new();
+
+                                                // Add lines before the changed range
+                                                for i in 0..start_line_idx {
+                                                    new_doc.push_str(lines[i]);
+                                                    new_doc.push('\n');
+                                                }
+
+                                                // Build the modified line(s)
+                                                if start_line_idx == end_line_idx {
+                                                    // Single line change
+                                                    let line = lines[start_line_idx];
+                                                    let start_byte = utf16_offset_to_utf8(
+                                                        line,
+                                                        start_char as usize,
+                                                    );
+                                                    let end_byte = utf16_offset_to_utf8(
+                                                        line,
+                                                        end_char as usize,
+                                                    );
+                                                    new_doc.push_str(&line[..start_byte]);
+                                                    new_doc.push_str(text);
+                                                    new_doc.push_str(&line[end_byte..]);
+                                                } else {
+                                                    // Multi-line change
+                                                    let start_line_text = lines[start_line_idx];
+                                                    let start_byte = utf16_offset_to_utf8(
+                                                        start_line_text,
+                                                        start_char as usize,
+                                                    );
+                                                    new_doc
+                                                        .push_str(&start_line_text[..start_byte]);
+                                                    new_doc.push_str(text);
+
+                                                    let end_line_text = lines[end_line_idx];
+                                                    let end_byte = utf16_offset_to_utf8(
+                                                        end_line_text,
+                                                        end_char as usize,
+                                                    );
+                                                    new_doc.push_str(&end_line_text[end_byte..]);
+                                                }
+
+                                                // Add lines after the changed range
+                                                for i in (end_line_idx + 1)..lines.len() {
+                                                    new_doc.push('\n');
+                                                    new_doc.push_str(lines[i]);
+                                                }
+
+                                                docs.insert(uri.to_string(), new_doc);
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                // Full document sync (no range provided)
+                                docs.insert(uri.to_string(), text.to_string());
+                            }
                         }
                     }
                 }
@@ -158,7 +273,11 @@ impl Server {
         }
 
         let line_text = lines[line];
-        if character > line_text.len() {
+
+        // Convert UTF-16 code unit offset to UTF-8 byte offset
+        let byte_pos = utf16_offset_to_utf8(line_text, character);
+
+        if byte_pos > line_text.len() {
             return Some(JsonRpcResponse {
                 jsonrpc: "2.0".to_string(),
                 id: request.id.clone(),
@@ -168,7 +287,7 @@ impl Server {
         }
 
         // Find the closest colon before the cursor
-        let colon_pos = match line_text[..character].rfind(':') {
+        let colon_pos = match line_text[..byte_pos].rfind(':') {
             Some(pos) => pos,
             None => {
                 return Some(JsonRpcResponse {
@@ -180,8 +299,7 @@ impl Server {
             }
         };
 
-        let query = line_text[colon_pos + 1..character].to_lowercase();
-        let start = colon_pos + 1;
+        let query = line_text[colon_pos + 1..byte_pos].to_lowercase();
 
         // Don't suggest if query is empty
         if query.is_empty() {
@@ -216,6 +334,9 @@ impl Server {
                 // Use both shortcode and name for filtering so it matches on either
                 let filter_text = format!("{} {}", shortcode.unwrap_or(name), name);
 
+                // Convert byte positions back to UTF-16 for the textEdit range
+                let colon_utf16 = utf8_offset_to_utf16(line_text, colon_pos);
+
                 let completion_item = json!({
                     "label": label,
                     "kind": 1, // Text
@@ -227,7 +348,7 @@ impl Server {
                         "range": {
                             "start": {
                                 "line": line,
-                                "character": start - 1
+                                "character": colon_utf16
                             },
                             "end": {
                                 "line": line,
