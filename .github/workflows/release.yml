@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - "[0-9]+.[0-9]+.[0-9]+"
+      - "[0-9]+.[0-9]+.[0-9]+*"
 
 jobs:
   build:
@@ -96,6 +96,7 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
+          draft: true
           files: release_files/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
