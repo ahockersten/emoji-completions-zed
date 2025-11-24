@@ -1,46 +1,13 @@
 use std::collections::HashMap;
 use std::error::Error;
 
+use line_index::{LineIndex, WideEncoding};
 use lsp_server::{Connection, Message, Response};
 use lsp_types::{
     CompletionItem, CompletionItemKind, CompletionOptions, CompletionParams, CompletionResponse,
     CompletionTextEdit, DidChangeTextDocumentParams, DidOpenTextDocumentParams, Position, Range,
     ServerCapabilities, TextDocumentSyncKind, TextEdit,
 };
-
-// Convert UTF-16 code unit offset to UTF-8 byte offset
-fn utf16_offset_to_utf8(s: &str, utf16_offset: usize) -> usize {
-    let mut byte_pos = 0;
-    let mut utf16_count = 0;
-
-    for ch in s.chars() {
-        if utf16_count >= utf16_offset {
-            break;
-        }
-        let utf16_units = if ch as u32 > 0xFFFF { 2 } else { 1 };
-        utf16_count += utf16_units;
-        byte_pos += ch.len_utf8();
-    }
-
-    byte_pos
-}
-
-// Convert UTF-8 byte offset to UTF-16 code unit offset
-fn utf8_offset_to_utf16(s: &str, byte_offset: usize) -> usize {
-    let mut utf16_count = 0;
-    let mut current_byte = 0;
-
-    for ch in s.chars() {
-        if current_byte >= byte_offset {
-            break;
-        }
-        current_byte += ch.len_utf8();
-        let utf16_units = if ch as u32 > 0xFFFF { 2 } else { 1 };
-        utf16_count += utf16_units;
-    }
-
-    utf16_count
-}
 
 fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     let (connection, io_threads) = Connection::stdio();
@@ -128,18 +95,30 @@ fn handle_completion(
     }
     let line_text = lines[line_idx];
 
-    let byte_pos = utf16_offset_to_utf8(line_text, position.character as usize);
-    if byte_pos > line_text.len() {
+    // Use line-index to convert UTF-16 offset to UTF-8 byte offset
+    let line_index = LineIndex::new(line_text);
+    let byte_offset = match line_index.to_utf8(
+        WideEncoding::Utf16,
+        line_index::WideLineCol {
+            line: 0,
+            col: position.character,
+        },
+    ) {
+        Some(line_col) => line_col.col as usize,
+        None => return Some(CompletionResponse::Array(vec![])),
+    };
+
+    if byte_offset > line_text.len() {
         return Some(CompletionResponse::Array(vec![]));
     }
 
     // Find the closest colon before the cursor
-    let colon_pos = match line_text[..byte_pos].rfind(':') {
+    let colon_pos = match line_text[..byte_offset].rfind(':') {
         Some(pos) => pos,
         None => return Some(CompletionResponse::Array(vec![])),
     };
 
-    let query = line_text[colon_pos + 1..byte_pos].to_lowercase();
+    let query = line_text[colon_pos + 1..byte_offset].to_lowercase();
     if query.is_empty() {
         return Some(CompletionResponse::Array(vec![]));
     }
@@ -164,7 +143,18 @@ fn handle_completion(
             };
 
             let filter_text = format!("{} {}", shortcode.unwrap_or(name), name);
-            let colon_utf16 = utf8_offset_to_utf16(line_text, colon_pos);
+
+            // Convert UTF-8 byte offset back to UTF-16 for LSP
+            let colon_utf16 = match line_index.to_wide(
+                WideEncoding::Utf16,
+                line_index::LineCol {
+                    line: 0,
+                    col: colon_pos as u32,
+                },
+            ) {
+                Some(wide_col) => wide_col.col,
+                None => continue,
+            };
 
             let completion_item = CompletionItem {
                 label,
@@ -177,7 +167,7 @@ fn handle_completion(
                     range: Range {
                         start: Position {
                             line: position.line,
-                            character: colon_utf16 as u32,
+                            character: colon_utf16,
                         },
                         end: position,
                     },
