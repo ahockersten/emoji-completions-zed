@@ -50,7 +50,6 @@ This project uses immutable tags, which makes releasing a new version a bit more
 - Better search
 - Enable emoji markup support similar to emojisense (e.g. `::smile` inserts `:smile`)
 - Configuration for which languages to enable emoji completions in.
-- Stop hard-coding download URL, see: https://github.com/zed-industries/extensions/pull/3941#pullrequestreview-3500665902
 - Non-language specific support (I don't think Zed supports this yet?). Currently this only works in file types where the language server is explicitly activated. Confirmed here: https://github.com/zed-industries/extensions/pull/3941#pullrequestreview-3500665902
 
 ## Credits

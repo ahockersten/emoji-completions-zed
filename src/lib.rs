@@ -85,10 +85,16 @@ impl EmojiCompletionsExtension {
 
         let asset_name: String = format!("emoji-language-server-{}-{}{}", os, arch_str, extension);
 
-        let download_url = format!(
-            "https://github.com/ahockersten/emoji-completions-zed/releases/download/{}/{}",
-            release.version, asset_name
-        );
+        let asset = release
+            .assets
+            .iter()
+            .find(|asset| asset.name == asset_name)
+            .ok_or_else(|| {
+                format!(
+                    "Asset {} not found in release {}",
+                    asset_name, release.version
+                )
+            })?;
 
         let binary_path = asset_name.clone();
 
@@ -99,7 +105,7 @@ impl EmojiCompletionsExtension {
             );
 
             zed::download_file(
-                &download_url,
+                &asset.download_url,
                 &binary_path,
                 zed::DownloadedFileType::Uncompressed,
             )
