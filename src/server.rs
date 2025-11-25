@@ -8,6 +8,7 @@ use lsp_types::{
     CompletionTextEdit, DidChangeTextDocumentParams, DidOpenTextDocumentParams, Position, Range,
     ServerCapabilities, TextDocumentSyncKind, TextEdit,
 };
+use nucleo_matcher::{Config, Matcher, Utf32Str};
 
 fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     let (connection, io_threads) = Connection::stdio();
@@ -123,19 +124,40 @@ fn handle_completion(
         return Some(CompletionResponse::Array(vec![]));
     }
 
+    let mut matcher = Matcher::new(Config::DEFAULT);
     let mut completions = Vec::new();
+
+    // Reusable buffers for UTF-32 conversion
+    let mut haystack_buf = vec![];
+    let mut needle_buf = vec![];
 
     for emoji in emojis::iter() {
         let emoji_char = emoji.as_str();
         let name = emoji.name();
         let shortcode = emoji.shortcode();
 
-        let matches_name = name.to_lowercase().contains(&query);
-        let matches_shortcode = shortcode
-            .map(|code| code.to_lowercase().contains(&query))
-            .unwrap_or(false);
+        // Try matching against shortcode first (higher priority), then name
+        let score = if let Some(code) = shortcode {
+            haystack_buf.clear();
+            needle_buf.clear();
+            let code_utf32 = Utf32Str::new(code, &mut haystack_buf);
+            let query_utf32 = Utf32Str::new(&query, &mut needle_buf);
+            matcher.fuzzy_match(code_utf32, query_utf32).or_else(|| {
+                haystack_buf.clear();
+                needle_buf.clear();
+                let name_utf32 = Utf32Str::new(name, &mut haystack_buf);
+                let query_utf32 = Utf32Str::new(&query, &mut needle_buf);
+                matcher.fuzzy_match(name_utf32, query_utf32)
+            })
+        } else {
+            haystack_buf.clear();
+            needle_buf.clear();
+            let name_utf32 = Utf32Str::new(name, &mut haystack_buf);
+            let query_utf32 = Utf32Str::new(&query, &mut needle_buf);
+            matcher.fuzzy_match(name_utf32, query_utf32)
+        };
 
-        if matches_name || matches_shortcode {
+        if let Some(score) = score {
             let label = if let Some(code) = shortcode {
                 format!(":{} {}", code, emoji_char)
             } else {
@@ -162,7 +184,8 @@ fn handle_completion(
                 detail: Some(name.to_string()),
                 insert_text: Some(emoji_char.to_string()),
                 filter_text: Some(filter_text),
-                sort_text: Some(format!("{:06}", completions.len())),
+                // Use negative score for sort_text (higher score = better match, lower sort value = appears first)
+                sort_text: Some(format!("{:010}", u32::MAX - score as u32)),
                 text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                     range: Range {
                         start: Position {
@@ -176,13 +199,15 @@ fn handle_completion(
                 ..Default::default()
             };
 
-            completions.push(completion_item);
-
-            if completions.len() >= 100 {
-                break;
-            }
+            completions.push((score, completion_item));
         }
     }
+
+    // Sort by score (higher is better) and take top 100
+    completions.sort_by(|a, b| b.0.cmp(&a.0));
+    completions.truncate(100);
+
+    let completions: Vec<CompletionItem> = completions.into_iter().map(|(_, item)| item).collect();
 
     Some(CompletionResponse::Array(completions))
 }
