@@ -10,13 +10,13 @@ A Zed editor extension that provides emoji autocompletion similar to Slack. Type
 
 1. Clone the repository.
 2. Build using `cargo build --release`.
-3. Copy the `emoji-language-server` binary to your Zed extensions directory:
+3. Use the `zed: install dev extension` command in Zed to install the extension from
+4. Quit Zed
+5. Copy the `emoji-language-server` binary to your Zed extensions directory:
    ```sh
-   mkdir -p ~/.zed/extensions/emoji-completions
-   cp target/release/emoji-language-server ~/.config/zed/extensions/emoji-completions
+   cp target/release/emoji-language-server ~/.local/share/zed/extensions/work/emoji-completions/emoji-language-server-linux-x86_64
    ```
-4. Use the `zed: install dev extension` command in Zed to install the extension from the local path.
-5. Restart all language servers in Zed
+6. Start Zed again
 
 ## Making a release
 
@@ -47,7 +47,6 @@ This project uses immutable tags, which makes releasing a new version a bit more
 
 ## Possible improvements (PRs welcome!)
 - Add support for skin tone modifiers.
-- Better search
 - Enable emoji markup support similar to emojisense (e.g. `::smile` inserts `:smile:`)
 - Configuration for which languages to enable emoji completions in (is this possible? I haven't found documentation for this for Zed).
 - Non-language specific support (I don't think Zed supports this yet? Confirmed here: https://github.com/zed-industries/extensions/pull/3941#pullrequestreview-3500665902). Currently this only works in file types where the language server is explicitly activated.

@@ -1,3 +1,5 @@
+mod matching;
+
 use std::collections::HashMap;
 use std::error::Error;
 
@@ -8,6 +10,8 @@ use lsp_types::{
     CompletionTextEdit, DidChangeTextDocumentParams, DidOpenTextDocumentParams, Position, Range,
     ServerCapabilities, TextDocumentSyncKind, TextEdit,
 };
+
+use matching::find_matching_emojis;
 
 fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     let (connection, io_threads) = Connection::stdio();
@@ -119,30 +123,23 @@ fn handle_completion(
     };
 
     let query = line_text[colon_pos + 1..byte_offset].to_lowercase();
-    if query.is_empty() {
-        return Some(CompletionResponse::Array(vec![]));
-    }
 
-    let mut completions = Vec::new();
+    let scored_emojis = find_matching_emojis(&query);
 
-    for emoji in emojis::iter() {
-        let emoji_char = emoji.as_str();
-        let name = emoji.name();
-        let shortcode = emoji.shortcode();
-
-        let matches_name = name.to_lowercase().contains(&query);
-        let matches_shortcode = shortcode
-            .map(|code| code.to_lowercase().contains(&query))
-            .unwrap_or(false);
-
-        if matches_name || matches_shortcode {
-            let label = if let Some(code) = shortcode {
-                format!(":{} {}", code, emoji_char)
+    let completions: Vec<CompletionItem> = scored_emojis
+        .iter()
+        .filter_map(|scored| {
+            let label = if let Some(code) = &scored.shortcode {
+                format!(":{} {}", code, scored.emoji_char)
             } else {
-                format!(":{} {}", name, emoji_char)
+                format!(":{} {}", scored.name, scored.emoji_char)
             };
 
-            let filter_text = format!("{} {}", shortcode.unwrap_or(name), name);
+            let filter_text = format!(
+                "{} {}",
+                scored.shortcode.as_deref().unwrap_or(&scored.name),
+                scored.name
+            );
 
             // Convert UTF-8 byte offset back to UTF-16 for LSP
             let colon_utf16 = match line_index.to_wide(
@@ -153,16 +150,17 @@ fn handle_completion(
                 },
             ) {
                 Some(wide_col) => wide_col.col,
-                None => continue,
+                None => return None,
             };
 
-            let completion_item = CompletionItem {
+            Some(CompletionItem {
                 label,
                 kind: Some(CompletionItemKind::TEXT),
-                detail: Some(name.to_string()),
-                insert_text: Some(emoji_char.to_string()),
+                detail: Some(scored.name.clone()),
+                insert_text: Some(scored.emoji_char.clone()),
                 filter_text: Some(filter_text),
-                sort_text: Some(format!("{:06}", completions.len())),
+                // Use negative score for sort_text (higher score = better match, lower sort value = appears first)
+                sort_text: Some(format!("{:012}", u64::MAX - scored.score as u64)),
                 text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                     range: Range {
                         start: Position {
@@ -171,18 +169,12 @@ fn handle_completion(
                         },
                         end: position,
                     },
-                    new_text: emoji_char.to_string(),
+                    new_text: scored.emoji_char.clone(),
                 })),
                 ..Default::default()
-            };
-
-            completions.push(completion_item);
-
-            if completions.len() >= 100 {
-                break;
-            }
-        }
-    }
+            })
+        })
+        .collect();
 
     Some(CompletionResponse::Array(completions))
 }
