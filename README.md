@@ -10,13 +10,13 @@ A Zed editor extension that provides emoji autocompletion similar to Slack. Type
 
 1. Clone the repository.
 2. Build using `cargo build --release`.
-3. Copy the `emoji-language-server` binary to your Zed extensions directory:
+3. Use the `zed: install dev extension` command in Zed to install the extension from
+4. Quit Zed
+5. Copy the `emoji-language-server` binary to your Zed extensions directory:
    ```sh
-   mkdir -p ~/.zed/extensions/emoji-completions
-   cp target/release/emoji-language-server ~/.config/zed/extensions/emoji-completions
+   cp target/release/emoji-language-server ~/.local/share/zed/extensions/work/emoji-completions/emoji-language-server-linux-x86_64
    ```
-4. Use the `zed: install dev extension` command in Zed to install the extension from the local path.
-5. Restart all language servers in Zed
+6. Start Zed again
 
 ## Making a release
 
