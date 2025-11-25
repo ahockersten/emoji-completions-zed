@@ -137,27 +137,44 @@ fn handle_completion(
         let shortcode = emoji.shortcode();
 
         // Try matching against shortcode first (higher priority), then name
-        let score = if let Some(code) = shortcode {
+        let (mut score, matched_field) = if let Some(code) = shortcode {
             haystack_buf.clear();
             needle_buf.clear();
             let code_utf32 = Utf32Str::new(code, &mut haystack_buf);
             let query_utf32 = Utf32Str::new(&query, &mut needle_buf);
-            matcher.fuzzy_match(code_utf32, query_utf32).or_else(|| {
+            if let Some(s) = matcher.fuzzy_match(code_utf32, query_utf32) {
+                (s, code)
+            } else {
                 haystack_buf.clear();
                 needle_buf.clear();
                 let name_utf32 = Utf32Str::new(name, &mut haystack_buf);
                 let query_utf32 = Utf32Str::new(&query, &mut needle_buf);
-                matcher.fuzzy_match(name_utf32, query_utf32)
-            })
+                match matcher.fuzzy_match(name_utf32, query_utf32) {
+                    Some(s) => (s, name),
+                    None => continue,
+                }
+            }
         } else {
             haystack_buf.clear();
             needle_buf.clear();
             let name_utf32 = Utf32Str::new(name, &mut haystack_buf);
             let query_utf32 = Utf32Str::new(&query, &mut needle_buf);
-            matcher.fuzzy_match(name_utf32, query_utf32)
+            match matcher.fuzzy_match(name_utf32, query_utf32) {
+                Some(s) => (s, name),
+                None => continue,
+            }
         };
 
-        if let Some(score) = score {
+        // Boost score for exact matches and prefix matches
+        if matched_field == query {
+            // Exact match - huge boost
+            score += 10000;
+        } else if matched_field.starts_with(&query) {
+            // Prefix match - significant boost
+            score += 5000;
+        }
+
+        if score > 0 {
             let label = if let Some(code) = shortcode {
                 format!(":{} {}", code, emoji_char)
             } else {
@@ -185,7 +202,7 @@ fn handle_completion(
                 insert_text: Some(emoji_char.to_string()),
                 filter_text: Some(filter_text),
                 // Use negative score for sort_text (higher score = better match, lower sort value = appears first)
-                sort_text: Some(format!("{:010}", u32::MAX - score as u32)),
+                sort_text: Some(format!("{:012}", u64::MAX - score as u64)),
                 text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                     range: Range {
                         start: Position {
