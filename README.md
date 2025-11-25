@@ -47,7 +47,6 @@ This project uses immutable tags, which makes releasing a new version a bit more
 
 ## Possible improvements (PRs welcome!)
 - Add support for skin tone modifiers.
-- Better search
 - Enable emoji markup support similar to emojisense (e.g. `::smile` inserts `:smile:`)
 - Configuration for which languages to enable emoji completions in (is this possible? I haven't found documentation for this for Zed).
 - Non-language specific support (I don't think Zed supports this yet? Confirmed here: https://github.com/zed-industries/extensions/pull/3941#pullrequestreview-3500665902). Currently this only works in file types where the language server is explicitly activated.
