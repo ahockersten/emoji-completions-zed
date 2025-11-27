@@ -96,7 +96,12 @@ impl EmojiCompletionsExtension {
                 )
             })?;
 
-        let binary_path = asset_name.clone();
+        let binary_path = format!(
+            "{}-{}{}",
+            asset_name.trim_end_matches(extension),
+            VERSION,
+            extension
+        );
 
         if !fs::metadata(&binary_path).map_or(false, |stat| stat.is_file()) {
             zed::set_language_server_installation_status(
