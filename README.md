@@ -28,7 +28,7 @@ This project uses immutable tags, which makes releasing a new version a bit more
   git tag 1.0.0-beta0
   git push origin 1.0.0-beta0
   ```
-3. The release will now be built, but it will be marked as a pre-release build. Mark the build as a pre-release in the GitHub UI.
+3. The release will now be built, but it will be marked as a draft. Mark the build as a pre-release in the GitHub UI.
 4. Build locally with `cargo build --release`.
 5. Remove any existing `emoji-language-server` binary from the Zed extensions directory:
    ```sh
