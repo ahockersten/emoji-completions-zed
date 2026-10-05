@@ -68,7 +68,7 @@ impl EmojiCompletionsExtension {
 
         let arch_str: &str = match arch {
             zed::Architecture::Aarch64 => "aarch64",
-            zed::Architecture::X86 => "i686",
+            zed::Architecture::X86 => return Err("32-bit x86 is not supported".to_string()),
             zed::Architecture::X8664 => "x86_64",
         };
 
@@ -117,6 +117,8 @@ impl EmojiCompletionsExtension {
             .map_err(|e| format!("failed to download file: {e}"))?;
 
             zed::make_file_executable(&binary_path)?;
+
+            remove_other_binaries(&binary_path);
         }
 
         self.cached_binary_path = Some(binary_path.clone());
@@ -125,6 +127,20 @@ impl EmojiCompletionsExtension {
             args,
             env,
         })
+    }
+}
+
+/// Deletes binaries from earlier versions. Failing to delete one is not worth failing the start over.
+fn remove_other_binaries(keep: &str) {
+    let Ok(entries) = fs::read_dir(".") else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with("emoji-language-server-") && name != keep {
+            fs::remove_file(entry.path()).ok();
+        }
     }
 }
 
@@ -140,7 +156,14 @@ impl zed::Extension for EmojiCompletionsExtension {
         language_server_id: &LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
-        let binary = self.language_server_binary(language_server_id, worktree)?;
+        let binary = self
+            .language_server_binary(language_server_id, worktree)
+            .inspect_err(|e| {
+                zed::set_language_server_installation_status(
+                    language_server_id,
+                    &zed::LanguageServerInstallationStatus::Failed(e.clone()),
+                )
+            })?;
         Ok(zed::Command {
             command: binary.path,
             args: binary.args,
