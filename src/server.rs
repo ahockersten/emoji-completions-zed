@@ -4,11 +4,12 @@ use std::collections::HashMap;
 use std::error::Error;
 
 use line_index::{LineIndex, WideEncoding};
-use lsp_server::{Connection, Message, Response};
+use lsp_server::{Connection, Message, Notification, Response};
 use lsp_types::{
-    CompletionItem, CompletionItemKind, CompletionOptions, CompletionParams, CompletionResponse,
-    CompletionTextEdit, DidChangeTextDocumentParams, DidOpenTextDocumentParams, Position, Range,
-    ServerCapabilities, TextDocumentSyncKind, TextEdit,
+    CompletionItem, CompletionItemKind, CompletionList, CompletionOptions, CompletionParams,
+    CompletionResponse, CompletionTextEdit, DidChangeTextDocumentParams,
+    DidCloseTextDocumentParams, DidOpenTextDocumentParams, Position, Range, ServerCapabilities,
+    TextDocumentSyncKind, TextEdit,
 };
 
 use matching::find_matching_emojis;
@@ -47,12 +48,7 @@ fn main_loop(connection: Connection) -> Result<(), Box<dyn Error + Sync + Send>>
                         let (id, params) =
                             req.extract::<CompletionParams>("textDocument/completion")?;
                         let result = handle_completion(&documents, params);
-                        let result = serde_json::to_value(&result).unwrap();
-                        let resp = Response {
-                            id,
-                            result: Some(result),
-                            error: None,
-                        };
+                        let resp = Response::new_ok(id, result);
                         connection.sender.send(Message::Response(resp))?;
                     }
                     _ => {
@@ -61,25 +57,35 @@ fn main_loop(connection: Connection) -> Result<(), Box<dyn Error + Sync + Send>>
                 }
             }
             Message::Response(_) => {}
-            Message::Notification(not) => match not.method.as_str() {
-                "textDocument/didOpen" => {
-                    let params =
-                        not.extract::<DidOpenTextDocumentParams>("textDocument/didOpen")?;
-                    documents.insert(
-                        params.text_document.uri.to_string(),
-                        params.text_document.text,
-                    );
-                }
-                "textDocument/didChange" => {
-                    let params =
-                        not.extract::<DidChangeTextDocumentParams>("textDocument/didChange")?;
-                    if let Some(change) = params.content_changes.into_iter().next() {
-                        documents.insert(params.text_document.uri.to_string(), change.text);
-                    }
-                }
-                _ => {}
-            },
+            Message::Notification(not) => handle_notification(&mut documents, not)?,
         }
+    }
+    Ok(())
+}
+
+fn handle_notification(
+    documents: &mut HashMap<String, String>,
+    not: Notification,
+) -> Result<(), Box<dyn Error + Sync + Send>> {
+    match not.method.as_str() {
+        "textDocument/didOpen" => {
+            let params = not.extract::<DidOpenTextDocumentParams>("textDocument/didOpen")?;
+            documents.insert(
+                params.text_document.uri.to_string(),
+                params.text_document.text,
+            );
+        }
+        "textDocument/didChange" => {
+            let params = not.extract::<DidChangeTextDocumentParams>("textDocument/didChange")?;
+            if let Some(change) = params.content_changes.into_iter().next() {
+                documents.insert(params.text_document.uri.to_string(), change.text);
+            }
+        }
+        "textDocument/didClose" => {
+            let params = not.extract::<DidCloseTextDocumentParams>("textDocument/didClose")?;
+            documents.remove(params.text_document.uri.as_str());
+        }
+        _ => {}
     }
     Ok(())
 }
@@ -95,7 +101,7 @@ fn handle_completion(
 
     let lines: Vec<&str> = text.lines().collect();
     if line_idx >= lines.len() {
-        return Some(CompletionResponse::Array(vec![]));
+        return incomplete(vec![]);
     }
     let line_text = lines[line_idx];
 
@@ -109,20 +115,17 @@ fn handle_completion(
         },
     ) {
         Some(line_col) => line_col.col as usize,
-        None => return Some(CompletionResponse::Array(vec![])),
+        None => return incomplete(vec![]),
     };
 
     if byte_offset > line_text.len() {
-        return Some(CompletionResponse::Array(vec![]));
+        return incomplete(vec![]);
     }
 
-    // Find the closest colon before the cursor
-    let colon_pos = match line_text[..byte_offset].rfind(':') {
-        Some(pos) => pos,
-        None => return Some(CompletionResponse::Array(vec![])),
+    let (colon_pos, query) = match emoji_query(&line_text[..byte_offset]) {
+        Some((pos, query)) => (pos, query.to_lowercase()),
+        None => return incomplete(vec![]),
     };
-
-    let query = line_text[colon_pos + 1..byte_offset].to_lowercase();
 
     let scored_emojis = find_matching_emojis(&query);
 
@@ -159,8 +162,7 @@ fn handle_completion(
                 detail: Some(scored.name.clone()),
                 insert_text: Some(scored.emoji_char.clone()),
                 filter_text: Some(filter_text),
-                // Use negative score for sort_text (higher score = better match, lower sort value = appears first)
-                sort_text: Some(format!("{:012}", u64::MAX - scored.score as u64)),
+                sort_text: Some(sort_text(scored.score)),
                 text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                     range: Range {
                         start: Position {
@@ -176,5 +178,155 @@ fn handle_completion(
         })
         .collect();
 
-    Some(CompletionResponse::Array(completions))
+    incomplete(completions)
+}
+
+/// Zed sorts by comparing strings, so higher scores must give strings that sort earlier.
+fn sort_text(score: u32) -> String {
+    format!("{:010}", u32::MAX - score)
+}
+
+/// Returns the byte position of the colon and the query after it, if the text before the
+/// cursor ends in something like `:smi`.
+fn emoji_query(before_cursor: &str) -> Option<(usize, &str)> {
+    let query_start = before_cursor
+        .rfind(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '_' | '+' | '-')))
+        .map_or(0, |pos| pos + 1);
+    let colon_pos = query_start.checked_sub(1)?;
+    if !before_cursor[colon_pos..].starts_with(':') {
+        return None;
+    }
+    // Only a colon that starts a word counts, so `std::fs` and `key:value` do not trigger.
+    let starts_word = before_cursor[..colon_pos]
+        .chars()
+        .next_back()
+        .is_none_or(|c| c.is_whitespace() || c == '(');
+    starts_word.then(|| (colon_pos, &before_cursor[query_start..]))
+}
+
+// Results are capped, so Zed must ask again as the query grows instead of filtering the first answer.
+fn incomplete(items: Vec<CompletionItem>) -> Option<CompletionResponse> {
+    Some(CompletionResponse::List(CompletionList {
+        is_incomplete: true,
+        items,
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lsp_types::{TextDocumentIdentifier, TextDocumentPositionParams, Uri};
+
+    const URI: &str = "file:///test.md";
+
+    fn complete(line: &str) -> Option<CompletionResponse> {
+        let documents = HashMap::from([(URI.to_string(), line.to_string())]);
+        let params = CompletionParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier {
+                    uri: URI.parse::<Uri>().unwrap(),
+                },
+                position: Position {
+                    line: 0,
+                    character: line.encode_utf16().count() as u32,
+                },
+            },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+            context: None,
+        };
+        handle_completion(&documents, params)
+    }
+
+    fn list(line: &str) -> lsp_types::CompletionList {
+        match complete(line) {
+            Some(CompletionResponse::List(list)) => list,
+            other => panic!("expected a completion list, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn response_is_marked_incomplete() {
+        assert!(list(":smi").is_incomplete);
+    }
+
+    #[test]
+    fn empty_query_is_marked_incomplete() {
+        let list = list(":");
+        assert!(list.items.is_empty());
+        assert!(list.is_incomplete);
+    }
+
+    fn has_shortcode(line: &str, shortcode: &str) -> bool {
+        let label = format!(":{shortcode} ");
+        list(line)
+            .items
+            .iter()
+            .any(|item| item.label.starts_with(&label))
+    }
+
+    #[test]
+    fn triggers_at_line_start() {
+        assert!(has_shortcode(":smi", "smile"));
+    }
+
+    #[test]
+    fn triggers_after_whitespace() {
+        assert!(has_shortcode("foo :smi", "smile"));
+    }
+
+    #[test]
+    fn triggers_after_parenthesis() {
+        assert!(has_shortcode("(:smi", "smile"));
+    }
+
+    #[test]
+    fn ignores_path_separator() {
+        assert!(list("use std::fs").items.is_empty());
+    }
+
+    #[test]
+    fn ignores_url() {
+        assert!(list("http://x").items.is_empty());
+    }
+
+    #[test]
+    fn ignores_colon_after_word() {
+        assert!(list("key:value").items.is_empty());
+    }
+
+    #[test]
+    fn ignores_query_with_space() {
+        assert!(list(":sm ile").items.is_empty());
+    }
+
+    #[test]
+    fn did_close_forgets_document() {
+        let mut documents = HashMap::new();
+        let open = Notification::new(
+            "textDocument/didOpen".to_string(),
+            serde_json::json!({
+                "textDocument": { "uri": URI, "languageId": "markdown", "version": 1, "text": ":smi" }
+            }),
+        );
+        let close = Notification::new(
+            "textDocument/didClose".to_string(),
+            serde_json::json!({ "textDocument": { "uri": URI } }),
+        );
+
+        handle_notification(&mut documents, open).unwrap();
+        assert!(documents.contains_key(URI));
+        handle_notification(&mut documents, close).unwrap();
+        assert!(!documents.contains_key(URI));
+    }
+
+    #[test]
+    fn sort_text_orders_higher_scores_first() {
+        let scores = [0, 1, 9, 10, 99, 100, 1000, u16::MAX as u32, u32::MAX];
+        let mut by_text = scores;
+        by_text.sort_by_key(|&score| sort_text(score));
+        let mut by_score = scores;
+        by_score.sort_by(|a, b| b.cmp(a));
+        assert_eq!(by_text, by_score);
+    }
 }

@@ -20,43 +20,33 @@ pub fn find_matching_emojis(query: &str) -> Vec<ScoredEmoji> {
     // Reusable buffers for UTF-32 conversion
     let mut haystack_buf = vec![];
     let mut needle_buf = vec![];
+    let needle = Utf32Str::new(query, &mut needle_buf);
+
+    let mut score = |haystack: &str| {
+        haystack_buf.clear();
+        matcher
+            .fuzzy_match(Utf32Str::new(haystack, &mut haystack_buf), needle)
+            .map(u32::from)
+    };
 
     for emoji in emojis::iter() {
-        let emoji_char = emoji.as_str();
         let name = emoji.name();
-        let shortcode = emoji.shortcode();
 
-        // Try matching against shortcode first (higher priority), then name
-        let score: u32 = if let Some(code) = shortcode {
-            haystack_buf.clear();
-            needle_buf.clear();
-            let code_utf32 = Utf32Str::new(code, &mut haystack_buf);
-            let query_utf32 = Utf32Str::new(query, &mut needle_buf);
-            if let Some(s) = matcher.fuzzy_match(code_utf32, query_utf32) {
-                s as u32
-            } else {
-                haystack_buf.clear();
-                needle_buf.clear();
-                let name_utf32 = Utf32Str::new(name, &mut haystack_buf);
-                let query_utf32 = Utf32Str::new(query, &mut needle_buf);
-                match matcher.fuzzy_match(name_utf32, query_utf32) {
-                    Some(s) => s as u32,
-                    None => continue,
-                }
-            }
-        } else {
-            haystack_buf.clear();
-            needle_buf.clear();
-            let name_utf32 = Utf32Str::new(name, &mut haystack_buf);
-            let query_utf32 = Utf32Str::new(query, &mut needle_buf);
-            match matcher.fuzzy_match(name_utf32, query_utf32) {
-                Some(s) => s as u32,
+        // Shortcodes take priority over the name; the best matching shortcode is the one shown.
+        let best_shortcode = emoji
+            .shortcodes()
+            .filter_map(|code| score(code).map(|s| (code, s)))
+            .max_by_key(|&(_, s)| s);
+        let (shortcode, score) = match best_shortcode {
+            Some((code, s)) => (Some(code), s),
+            None => match score(name) {
+                Some(s) => (emoji.shortcode(), s),
                 None => continue,
-            }
+            },
         };
 
         results.push(ScoredEmoji {
-            emoji_char: emoji_char.to_string(),
+            emoji_char: emoji.as_str().to_string(),
             name: name.to_string(),
             shortcode: shortcode.map(|s| s.to_string()),
             score,
@@ -64,7 +54,7 @@ pub fn find_matching_emojis(query: &str) -> Vec<ScoredEmoji> {
     }
 
     // Sort by score (higher is better) and take top 100
-    results.sort_by(|a, b| b.score.cmp(&a.score));
+    results.sort_by_key(|e| std::cmp::Reverse(e.score));
     results.truncate(100);
 
     results
@@ -101,7 +91,7 @@ mod tests {
         let smile_matches = results
             .iter()
             .filter(|e| {
-                e.shortcode.as_ref().map_or(false, |s| s.contains("smile"))
+                e.shortcode.as_ref().is_some_and(|s| s.contains("smile"))
                     || e.name.to_lowercase().contains("smile")
             })
             .count();
@@ -221,5 +211,16 @@ mod tests {
             !mixed_results.is_empty(),
             "Mixed case query should find results"
         );
+    }
+
+    #[test]
+    fn test_matches_second_shortcode() {
+        let results = find_matching_emojis("thumbsup");
+
+        let thumbs_up = results
+            .iter()
+            .find(|e| e.emoji_char == "👍")
+            .expect("Should find 👍");
+        assert_eq!(thumbs_up.shortcode.as_deref(), Some("thumbsup"));
     }
 }
