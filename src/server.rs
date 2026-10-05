@@ -4,11 +4,12 @@ use std::collections::HashMap;
 use std::error::Error;
 
 use line_index::{LineIndex, WideEncoding};
-use lsp_server::{Connection, Message, Response};
+use lsp_server::{Connection, Message, Notification, Response};
 use lsp_types::{
     CompletionItem, CompletionItemKind, CompletionList, CompletionOptions, CompletionParams,
-    CompletionResponse, CompletionTextEdit, DidChangeTextDocumentParams, DidOpenTextDocumentParams,
-    Position, Range, ServerCapabilities, TextDocumentSyncKind, TextEdit,
+    CompletionResponse, CompletionTextEdit, DidChangeTextDocumentParams,
+    DidCloseTextDocumentParams, DidOpenTextDocumentParams, Position, Range, ServerCapabilities,
+    TextDocumentSyncKind, TextEdit,
 };
 
 use matching::find_matching_emojis;
@@ -61,25 +62,35 @@ fn main_loop(connection: Connection) -> Result<(), Box<dyn Error + Sync + Send>>
                 }
             }
             Message::Response(_) => {}
-            Message::Notification(not) => match not.method.as_str() {
-                "textDocument/didOpen" => {
-                    let params =
-                        not.extract::<DidOpenTextDocumentParams>("textDocument/didOpen")?;
-                    documents.insert(
-                        params.text_document.uri.to_string(),
-                        params.text_document.text,
-                    );
-                }
-                "textDocument/didChange" => {
-                    let params =
-                        not.extract::<DidChangeTextDocumentParams>("textDocument/didChange")?;
-                    if let Some(change) = params.content_changes.into_iter().next() {
-                        documents.insert(params.text_document.uri.to_string(), change.text);
-                    }
-                }
-                _ => {}
-            },
+            Message::Notification(not) => handle_notification(&mut documents, not)?,
         }
+    }
+    Ok(())
+}
+
+fn handle_notification(
+    documents: &mut HashMap<String, String>,
+    not: Notification,
+) -> Result<(), Box<dyn Error + Sync + Send>> {
+    match not.method.as_str() {
+        "textDocument/didOpen" => {
+            let params = not.extract::<DidOpenTextDocumentParams>("textDocument/didOpen")?;
+            documents.insert(
+                params.text_document.uri.to_string(),
+                params.text_document.text,
+            );
+        }
+        "textDocument/didChange" => {
+            let params = not.extract::<DidChangeTextDocumentParams>("textDocument/didChange")?;
+            if let Some(change) = params.content_changes.into_iter().next() {
+                documents.insert(params.text_document.uri.to_string(), change.text);
+            }
+        }
+        "textDocument/didClose" => {
+            let params = not.extract::<DidCloseTextDocumentParams>("textDocument/didClose")?;
+            documents.remove(params.text_document.uri.as_str());
+        }
+        _ => {}
     }
     Ok(())
 }
@@ -288,5 +299,25 @@ mod tests {
     #[test]
     fn ignores_query_with_space() {
         assert!(list(":sm ile").items.is_empty());
+    }
+
+    #[test]
+    fn did_close_forgets_document() {
+        let mut documents = HashMap::new();
+        let open = Notification::new(
+            "textDocument/didOpen".to_string(),
+            serde_json::json!({
+                "textDocument": { "uri": URI, "languageId": "markdown", "version": 1, "text": ":smi" }
+            }),
+        );
+        let close = Notification::new(
+            "textDocument/didClose".to_string(),
+            serde_json::json!({ "textDocument": { "uri": URI } }),
+        );
+
+        handle_notification(&mut documents, open).unwrap();
+        assert!(documents.contains_key(URI));
+        handle_notification(&mut documents, close).unwrap();
+        assert!(!documents.contains_key(URI));
     }
 }
