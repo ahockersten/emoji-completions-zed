@@ -116,13 +116,10 @@ fn handle_completion(
         return incomplete(vec![]);
     }
 
-    // Find the closest colon before the cursor
-    let colon_pos = match line_text[..byte_offset].rfind(':') {
-        Some(pos) => pos,
+    let (colon_pos, query) = match emoji_query(&line_text[..byte_offset]) {
+        Some((pos, query)) => (pos, query.to_lowercase()),
         None => return incomplete(vec![]),
     };
-
-    let query = line_text[colon_pos + 1..byte_offset].to_lowercase();
 
     let scored_emojis = find_matching_emojis(&query);
 
@@ -179,6 +176,24 @@ fn handle_completion(
     incomplete(completions)
 }
 
+/// Returns the byte position of the colon and the query after it, if the text before the
+/// cursor ends in something like `:smi`.
+fn emoji_query(before_cursor: &str) -> Option<(usize, &str)> {
+    let query_start = before_cursor
+        .rfind(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '_' | '+' | '-')))
+        .map_or(0, |pos| pos + 1);
+    let colon_pos = query_start.checked_sub(1)?;
+    if !before_cursor[colon_pos..].starts_with(':') {
+        return None;
+    }
+    // Only a colon that starts a word counts, so `std::fs` and `key:value` do not trigger.
+    let starts_word = before_cursor[..colon_pos]
+        .chars()
+        .next_back()
+        .is_none_or(|c| c.is_whitespace() || c == '(');
+    starts_word.then(|| (colon_pos, &before_cursor[query_start..]))
+}
+
 // Results are capped, so Zed must ask again as the query grows instead of filtering the first answer.
 fn incomplete(items: Vec<CompletionItem>) -> Option<CompletionResponse> {
     Some(CompletionResponse::List(CompletionList {
@@ -230,5 +245,48 @@ mod tests {
         let list = list(":");
         assert!(list.items.is_empty());
         assert!(list.is_incomplete);
+    }
+
+    fn has_shortcode(line: &str, shortcode: &str) -> bool {
+        let label = format!(":{shortcode} ");
+        list(line)
+            .items
+            .iter()
+            .any(|item| item.label.starts_with(&label))
+    }
+
+    #[test]
+    fn triggers_at_line_start() {
+        assert!(has_shortcode(":smi", "smile"));
+    }
+
+    #[test]
+    fn triggers_after_whitespace() {
+        assert!(has_shortcode("foo :smi", "smile"));
+    }
+
+    #[test]
+    fn triggers_after_parenthesis() {
+        assert!(has_shortcode("(:smi", "smile"));
+    }
+
+    #[test]
+    fn ignores_path_separator() {
+        assert!(list("use std::fs").items.is_empty());
+    }
+
+    #[test]
+    fn ignores_url() {
+        assert!(list("http://x").items.is_empty());
+    }
+
+    #[test]
+    fn ignores_colon_after_word() {
+        assert!(list("key:value").items.is_empty());
+    }
+
+    #[test]
+    fn ignores_query_with_space() {
+        assert!(list(":sm ile").items.is_empty());
     }
 }
