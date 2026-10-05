@@ -70,10 +70,6 @@ This project uses immutable tags, which makes releasing a new version a bit more
 - Enable emoji markup support similar to emojisense (e.g. `::smile` inserts `:smile:`)
 - Non-language specific support (I don't think Zed supports this yet? Confirmed here: https://github.com/zed-industries/extensions/pull/3941#pullrequestreview-3500665902). Currently this only works in file types where the language server is explicitly activated.
 
-## Known issues
-
-- Zed on Linux does not appear to have access to the system emoji font, so emojis may not render correctly. Probably due to this issue: https://github.com/zed-industries/zed/issues/17254 (reference: https://github.com/zed-industries/zed/issues/34378)
-
 ## Credits
 
 Inspired by the Emojisense extension for Visual Studio Code: https://github.com/mattbierner/vscode-emojisense
