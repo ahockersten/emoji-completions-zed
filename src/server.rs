@@ -6,9 +6,9 @@ use std::error::Error;
 use line_index::{LineIndex, WideEncoding};
 use lsp_server::{Connection, Message, Response};
 use lsp_types::{
-    CompletionItem, CompletionItemKind, CompletionOptions, CompletionParams, CompletionResponse,
-    CompletionTextEdit, DidChangeTextDocumentParams, DidOpenTextDocumentParams, Position, Range,
-    ServerCapabilities, TextDocumentSyncKind, TextEdit,
+    CompletionItem, CompletionItemKind, CompletionList, CompletionOptions, CompletionParams,
+    CompletionResponse, CompletionTextEdit, DidChangeTextDocumentParams, DidOpenTextDocumentParams,
+    Position, Range, ServerCapabilities, TextDocumentSyncKind, TextEdit,
 };
 
 use matching::find_matching_emojis;
@@ -95,7 +95,7 @@ fn handle_completion(
 
     let lines: Vec<&str> = text.lines().collect();
     if line_idx >= lines.len() {
-        return Some(CompletionResponse::Array(vec![]));
+        return incomplete(vec![]);
     }
     let line_text = lines[line_idx];
 
@@ -109,17 +109,17 @@ fn handle_completion(
         },
     ) {
         Some(line_col) => line_col.col as usize,
-        None => return Some(CompletionResponse::Array(vec![])),
+        None => return incomplete(vec![]),
     };
 
     if byte_offset > line_text.len() {
-        return Some(CompletionResponse::Array(vec![]));
+        return incomplete(vec![]);
     }
 
     // Find the closest colon before the cursor
     let colon_pos = match line_text[..byte_offset].rfind(':') {
         Some(pos) => pos,
-        None => return Some(CompletionResponse::Array(vec![])),
+        None => return incomplete(vec![]),
     };
 
     let query = line_text[colon_pos + 1..byte_offset].to_lowercase();
@@ -176,5 +176,59 @@ fn handle_completion(
         })
         .collect();
 
-    Some(CompletionResponse::Array(completions))
+    incomplete(completions)
+}
+
+// Results are capped, so Zed must ask again as the query grows instead of filtering the first answer.
+fn incomplete(items: Vec<CompletionItem>) -> Option<CompletionResponse> {
+    Some(CompletionResponse::List(CompletionList {
+        is_incomplete: true,
+        items,
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lsp_types::{TextDocumentIdentifier, TextDocumentPositionParams, Url};
+
+    const URI: &str = "file:///test.md";
+
+    fn complete(line: &str) -> Option<CompletionResponse> {
+        let documents = HashMap::from([(URI.to_string(), line.to_string())]);
+        let params = CompletionParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier {
+                    uri: Url::parse(URI).unwrap(),
+                },
+                position: Position {
+                    line: 0,
+                    character: line.encode_utf16().count() as u32,
+                },
+            },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+            context: None,
+        };
+        handle_completion(&documents, params)
+    }
+
+    fn list(line: &str) -> lsp_types::CompletionList {
+        match complete(line) {
+            Some(CompletionResponse::List(list)) => list,
+            other => panic!("expected a completion list, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn response_is_marked_incomplete() {
+        assert!(list(":smi").is_incomplete);
+    }
+
+    #[test]
+    fn empty_query_is_marked_incomplete() {
+        let list = list(":");
+        assert!(list.items.is_empty());
+        assert!(list.is_incomplete);
+    }
 }
