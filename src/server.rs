@@ -48,12 +48,7 @@ fn main_loop(connection: Connection) -> Result<(), Box<dyn Error + Sync + Send>>
                         let (id, params) =
                             req.extract::<CompletionParams>("textDocument/completion")?;
                         let result = handle_completion(&documents, params);
-                        let result = serde_json::to_value(&result).unwrap();
-                        let resp = Response {
-                            id,
-                            result: Some(result),
-                            error: None,
-                        };
+                        let resp = Response::new_ok(id, result);
                         connection.sender.send(Message::Response(resp))?;
                     }
                     _ => {
@@ -220,7 +215,7 @@ fn incomplete(items: Vec<CompletionItem>) -> Option<CompletionResponse> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lsp_types::{TextDocumentIdentifier, TextDocumentPositionParams, Url};
+    use lsp_types::{TextDocumentIdentifier, TextDocumentPositionParams, Uri};
 
     const URI: &str = "file:///test.md";
 
@@ -229,7 +224,7 @@ mod tests {
         let params = CompletionParams {
             text_document_position: TextDocumentPositionParams {
                 text_document: TextDocumentIdentifier {
-                    uri: Url::parse(URI).unwrap(),
+                    uri: URI.parse::<Uri>().unwrap(),
                 },
                 position: Position {
                     line: 0,
