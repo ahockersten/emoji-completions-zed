@@ -54,7 +54,7 @@ pub fn find_matching_emojis(query: &str) -> Vec<ScoredEmoji> {
     }
 
     // Sort by score (higher is better) and take top 100
-    results.sort_by(|a, b| b.score.cmp(&a.score));
+    results.sort_by_key(|e| std::cmp::Reverse(e.score));
     results.truncate(100);
 
     results
@@ -91,7 +91,7 @@ mod tests {
         let smile_matches = results
             .iter()
             .filter(|e| {
-                e.shortcode.as_ref().map_or(false, |s| s.contains("smile"))
+                e.shortcode.as_ref().is_some_and(|s| s.contains("smile"))
                     || e.name.to_lowercase().contains("smile")
             })
             .count();
