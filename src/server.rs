@@ -167,8 +167,7 @@ fn handle_completion(
                 detail: Some(scored.name.clone()),
                 insert_text: Some(scored.emoji_char.clone()),
                 filter_text: Some(filter_text),
-                // Use negative score for sort_text (higher score = better match, lower sort value = appears first)
-                sort_text: Some(format!("{:012}", u64::MAX - scored.score as u64)),
+                sort_text: Some(sort_text(scored.score)),
                 text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                     range: Range {
                         start: Position {
@@ -185,6 +184,11 @@ fn handle_completion(
         .collect();
 
     incomplete(completions)
+}
+
+/// Zed sorts by comparing strings, so higher scores must give strings that sort earlier.
+fn sort_text(score: u32) -> String {
+    format!("{:010}", u32::MAX - score)
 }
 
 /// Returns the byte position of the colon and the query after it, if the text before the
@@ -319,5 +323,15 @@ mod tests {
         assert!(documents.contains_key(URI));
         handle_notification(&mut documents, close).unwrap();
         assert!(!documents.contains_key(URI));
+    }
+
+    #[test]
+    fn sort_text_orders_higher_scores_first() {
+        let scores = [0, 1, 9, 10, 99, 100, 1000, u16::MAX as u32, u32::MAX];
+        let mut by_text = scores;
+        by_text.sort_by_key(|&score| sort_text(score));
+        let mut by_score = scores;
+        by_score.sort_by(|a, b| b.cmp(a));
+        assert_eq!(by_text, by_score);
     }
 }
