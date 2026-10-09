@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::error::Error;
 
 use line_index::{LineIndex, WideEncoding};
-use lsp_server::{Connection, Message, Notification, Response};
+use lsp_server::{Connection, ErrorCode, Message, Notification, Response};
 use lsp_types::{
     CompletionItem, CompletionItemKind, CompletionList, CompletionOptions, CompletionParams,
     CompletionResponse, CompletionTextEdit, DidChangeTextDocumentParams,
@@ -44,21 +44,35 @@ fn main_loop(connection: Connection) -> Result<(), Box<dyn Error + Sync + Send>>
                 if connection.handle_shutdown(&req)? {
                     return Ok(());
                 }
-                match req.method.as_str() {
+                let id = req.id.clone();
+                let resp = match req.method.as_str() {
                     "textDocument/completion" => {
-                        let (id, params) =
-                            req.extract::<CompletionParams>("textDocument/completion")?;
-                        let result = handle_completion(&documents, params);
-                        let resp = Response::new_ok(id, result);
-                        connection.sender.send(Message::Response(resp))?;
+                        match req.extract::<CompletionParams>("textDocument/completion") {
+                            Ok((id, params)) => {
+                                Response::new_ok(id, handle_completion(&documents, params))
+                            }
+                            Err(e) => Response::new_err(
+                                id,
+                                ErrorCode::InvalidParams as i32,
+                                e.to_string(),
+                            ),
+                        }
                     }
-                    _ => {
-                        // ignore other requests
-                    }
-                }
+                    method => Response::new_err(
+                        id,
+                        ErrorCode::MethodNotFound as i32,
+                        format!("unhandled method {method}"),
+                    ),
+                };
+                connection.sender.send(Message::Response(resp))?;
             }
             Message::Response(_) => {}
-            Message::Notification(not) => handle_notification(&mut documents, not)?,
+            Message::Notification(not) => {
+                // A malformed notification should not take down completions for every open file.
+                if let Err(e) = handle_notification(&mut documents, not) {
+                    eprintln!("ignoring notification: {e}");
+                }
+            }
         }
     }
     Ok(())
@@ -100,11 +114,9 @@ fn handle_completion(
     let position = params.text_document_position.position;
     let line_idx = position.line as usize;
 
-    let lines: Vec<&str> = text.lines().collect();
-    if line_idx >= lines.len() {
+    let Some(line_text) = text.lines().nth(line_idx) else {
         return incomplete(vec![]);
-    }
-    let line_text = lines[line_idx];
+    };
 
     // Use line-index to convert UTF-16 offset to UTF-8 byte offset
     let line_index = LineIndex::new(line_text);
@@ -119,11 +131,12 @@ fn handle_completion(
         None => return incomplete(vec![]),
     };
 
-    if byte_offset > line_text.len() {
+    // A position past the end of the line or inside a surrogate pair gives no valid byte offset.
+    let Some(before_cursor) = line_text.get(..byte_offset) else {
         return incomplete(vec![]);
-    }
+    };
 
-    let (colon_pos, query) = match emoji_query(&line_text[..byte_offset]) {
+    let (colon_pos, query) = match emoji_query(before_cursor) {
         Some((pos, query)) => (pos, query.to_lowercase()),
         None => return incomplete(vec![]),
     };
@@ -236,30 +249,34 @@ mod tests {
 
     const URI: &str = "file:///test.md";
 
-    fn complete(line: &str) -> Option<CompletionResponse> {
-        let documents = HashMap::from([(URI.to_string(), line.to_string())]);
-        let params = CompletionParams {
+    fn completion_params(character: u32) -> CompletionParams {
+        CompletionParams {
             text_document_position: TextDocumentPositionParams {
                 text_document: TextDocumentIdentifier {
                     uri: URI.parse::<Uri>().unwrap(),
                 },
-                position: Position {
-                    line: 0,
-                    character: line.encode_utf16().count() as u32,
-                },
+                position: Position { line: 0, character },
             },
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),
             context: None,
-        };
-        handle_completion(&documents, params)
+        }
     }
 
-    fn list(line: &str) -> lsp_types::CompletionList {
-        match complete(line) {
+    fn complete_at(line: &str, character: u32) -> Option<CompletionResponse> {
+        let documents = HashMap::from([(URI.to_string(), line.to_string())]);
+        handle_completion(&documents, completion_params(character))
+    }
+
+    fn list_at(line: &str, character: u32) -> lsp_types::CompletionList {
+        match complete_at(line, character) {
             Some(CompletionResponse::List(list)) => list,
             other => panic!("expected a completion list, got {other:?}"),
         }
+    }
+
+    fn list(line: &str) -> lsp_types::CompletionList {
+        list_at(line, line.encode_utf16().count() as u32)
     }
 
     #[test]
@@ -364,6 +381,58 @@ mod tests {
         assert!(documents.contains_key(URI));
         handle_notification(&mut documents, close).unwrap();
         assert!(!documents.contains_key(URI));
+    }
+
+    #[test]
+    fn ignores_position_inside_surrogate_pair() {
+        assert!(list_at("😀:smi", 1).items.is_empty());
+    }
+
+    #[test]
+    fn ignores_position_past_line_end() {
+        assert!(list_at(":smi", 10).items.is_empty());
+    }
+
+    #[test]
+    fn answers_bad_requests_and_keeps_running() {
+        use lsp_server::{Request, RequestId};
+
+        let (server, client) = Connection::memory();
+        let server_thread = std::thread::spawn(move || main_loop(server));
+        let send_request = |id: i32, method: &str, params: serde_json::Value| {
+            let req = Request::new(RequestId::from(id), method.to_string(), params);
+            client.sender.send(Message::Request(req)).unwrap();
+            match client.receiver.recv().unwrap() {
+                Message::Response(resp) => resp,
+                other => panic!("expected a response, got {other:?}"),
+            }
+        };
+
+        let resp = send_request(1, "textDocument/hover", serde_json::json!({}));
+        assert_eq!(
+            resp.response_result.unwrap_err().code,
+            ErrorCode::MethodNotFound as i32
+        );
+
+        let resp = send_request(2, "textDocument/completion", serde_json::json!({}));
+        assert_eq!(
+            resp.response_result.unwrap_err().code,
+            ErrorCode::InvalidParams as i32
+        );
+
+        let bad_notification =
+            Notification::new("textDocument/didOpen".to_string(), serde_json::json!({}));
+        client
+            .sender
+            .send(Message::Notification(bad_notification))
+            .unwrap();
+
+        let params = serde_json::to_value(completion_params(0)).unwrap();
+        let resp = send_request(3, "textDocument/completion", params);
+        assert!(resp.response_result.is_ok());
+
+        drop(client);
+        server_thread.join().unwrap().unwrap();
     }
 
     #[test]
