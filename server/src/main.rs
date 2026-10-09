@@ -140,11 +140,22 @@ fn handle_completion(
         return incomplete(vec![]);
     };
 
+    // Convert UTF-8 byte offset back to UTF-16 for LSP
+    let Some(colon_utf16) = line_index.to_wide(
+        WideEncoding::Utf16,
+        line_index::LineCol {
+            line: 0,
+            col: colon_pos as u32,
+        },
+    ) else {
+        return incomplete(vec![]);
+    };
+
     let scored_emojis = find_matching_emojis(query);
 
     let completions: Vec<CompletionItem> = scored_emojis
         .iter()
-        .filter_map(|scored| {
+        .map(|scored| {
             let label = if let Some(code) = &scored.shortcode {
                 format!(":{} {}", code, scored.emoji_char)
             } else {
@@ -157,19 +168,7 @@ fn handle_completion(
                 scored.name
             );
 
-            // Convert UTF-8 byte offset back to UTF-16 for LSP
-            let colon_utf16 = match line_index.to_wide(
-                WideEncoding::Utf16,
-                line_index::LineCol {
-                    line: 0,
-                    col: colon_pos as u32,
-                },
-            ) {
-                Some(wide_col) => wide_col.col,
-                None => return None,
-            };
-
-            Some(CompletionItem {
+            CompletionItem {
                 label,
                 kind: Some(CompletionItemKind::TEXT),
                 detail: Some(scored.name.clone()),
@@ -179,14 +178,14 @@ fn handle_completion(
                     range: Range {
                         start: Position {
                             line: position.line,
-                            character: colon_utf16,
+                            character: colon_utf16.col,
                         },
                         end: position,
                     },
                     new_text: scored.emoji_char.clone(),
                 })),
                 ..Default::default()
-            })
+            }
         })
         .collect();
 
