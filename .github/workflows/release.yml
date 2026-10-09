@@ -6,8 +6,30 @@ on:
       - "[0-9]+.[0-9]+.[0-9]+*"
 
 jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # The extension downloads the release whose tag matches its version, so a mismatch
+      # gives a release that is never used.
+      - name: Check tag matches version
+        run: |
+          cargo_version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "emoji-completions") | .version')
+          extension_version=$(sed -n 's/^version = "\(.*\)"/\1/p' extension.toml)
+          echo "tag: $GITHUB_REF_NAME, Cargo.toml: $cargo_version, extension.toml: $extension_version"
+          [ "$cargo_version" = "$GITHUB_REF_NAME" ] && [ "$extension_version" = "$GITHUB_REF_NAME" ]
+
+      - name: Run tests
+        run: cargo test --workspace --verbose
+
   build:
     name: Build ${{ matrix.target }}
+    needs: verify
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -40,9 +62,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-
-      - name: Run tests
-        run: cargo test --workspace --verbose
 
       - name: Install cross
         if: matrix.os == 'ubuntu-latest' && matrix.target == 'aarch64-unknown-linux-musl'

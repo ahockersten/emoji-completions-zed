@@ -59,7 +59,7 @@ This project uses immutable tags, which makes releasing a new version a bit more
 6. Use the `zed: install dev extension` command in Zed to install the extension from the local path.
 7. Restart all language servers in Zed, this should trigger the new version to be used.
 8. Test that everything works as expected.
-9. Once verified, create a new tag for the stable release, e.g., `1.0.0`:
+9. Once verified, bump the version in `Cargo.toml` and `extension.toml` to the stable version, e.g., `1.0.0`, commit, and tag it. The release workflow fails if the tag does not match both files.
    ```sh
    git tag 1.0.0
    git push origin 1.0.0
