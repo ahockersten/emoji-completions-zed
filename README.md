@@ -2,6 +2,8 @@
 
 A Zed editor extension that provides emoji autocompletion similar to Slack. Type `:` followed by an emoji name to get suggestions.
 
+A query can be up to two words, so `:thumbs up` finds 👍.
+
 ## Example:
 
 ![Emoji completions demo](example.gif)
