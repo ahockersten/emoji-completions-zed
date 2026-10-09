@@ -1,3 +1,4 @@
+use nucleo_matcher::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -10,23 +11,26 @@ pub struct ScoredEmoji {
 
 /// Finds and scores emojis matching the given query
 pub fn find_matching_emojis(query: &str) -> Vec<ScoredEmoji> {
-    if query.is_empty() {
+    // Each word of the query is matched separately, so `thumbs up` matches `thumbsup`.
+    let pattern = Pattern::new(
+        query,
+        CaseMatching::Ignore,
+        Normalization::Smart,
+        AtomKind::Fuzzy,
+    );
+    if pattern.atoms.is_empty() {
         return vec![];
     }
 
     let mut matcher = Matcher::new(Config::DEFAULT);
     let mut results = Vec::new();
 
-    // Reusable buffers for UTF-32 conversion
+    // Reusable buffer for UTF-32 conversion
     let mut haystack_buf = vec![];
-    let mut needle_buf = vec![];
-    let needle = Utf32Str::new(query, &mut needle_buf);
 
     let mut score = |haystack: &str| {
         haystack_buf.clear();
-        matcher
-            .fuzzy_match(Utf32Str::new(haystack, &mut haystack_buf), needle)
-            .map(u32::from)
+        pattern.score(Utf32Str::new(haystack, &mut haystack_buf), &mut matcher)
     };
 
     for emoji in emojis::iter() {
@@ -211,6 +215,17 @@ mod tests {
             !mixed_results.is_empty(),
             "Mixed case query should find results"
         );
+    }
+
+    #[test]
+    fn test_whitespace_query_returns_nothing() {
+        assert!(find_matching_emojis(" ").is_empty());
+    }
+
+    #[test]
+    fn test_matches_two_words() {
+        let results = find_matching_emojis("thumbs up");
+        assert!(results.iter().any(|e| e.emoji_char == "👍"));
     }
 
     #[test]

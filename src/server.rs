@@ -20,7 +20,8 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     let server_capabilities = serde_json::to_value(&ServerCapabilities {
         text_document_sync: Some(TextDocumentSyncKind::FULL.into()),
         completion_provider: Some(CompletionOptions {
-            trigger_characters: Some(vec![":".to_string()]),
+            // A space is a trigger so Zed asks again for the second word of a query like `:thumbs up`.
+            trigger_characters: Some(vec![":".to_string(), " ".to_string()]),
             resolve_provider: Some(false),
             ..Default::default()
         }),
@@ -187,11 +188,21 @@ fn sort_text(score: u32) -> String {
 }
 
 /// Returns the byte position of the colon and the query after it, if the text before the
-/// cursor ends in something like `:smi`.
+/// cursor ends in something like `:smi` or `:thumbs u`.
 fn emoji_query(before_cursor: &str) -> Option<(usize, &str)> {
-    let query_start = before_cursor
-        .rfind(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '_' | '+' | '-')))
-        .map_or(0, |pos| pos + 1);
+    let last_word_start = word_start(before_cursor);
+    let query_start = match before_cursor[..last_word_start].strip_suffix(' ') {
+        // The query is limited to two words, so text typed after an emoji shortcode stops
+        // triggering completions once the next word ends.
+        Some(before_space) => {
+            let first_word_start = word_start(before_space);
+            if first_word_start == before_space.len() {
+                return None;
+            }
+            first_word_start
+        }
+        None => last_word_start,
+    };
     let colon_pos = query_start.checked_sub(1)?;
     if !before_cursor[colon_pos..].starts_with(':') {
         return None;
@@ -202,6 +213,12 @@ fn emoji_query(before_cursor: &str) -> Option<(usize, &str)> {
         .next_back()
         .is_none_or(|c| c.is_whitespace() || c == '(');
     starts_word.then(|| (colon_pos, &before_cursor[query_start..]))
+}
+
+/// Returns the byte position where the shortcode-like word at the end of `text` starts.
+fn word_start(text: &str) -> usize {
+    text.rfind(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '_' | '+' | '-')))
+        .map_or(0, |pos| pos + 1)
 }
 
 // Results are capped, so Zed must ask again as the query grows instead of filtering the first answer.
@@ -296,8 +313,37 @@ mod tests {
     }
 
     #[test]
-    fn ignores_query_with_space() {
-        assert!(list(":sm ile").items.is_empty());
+    fn matches_two_words() {
+        assert!(has_shortcode(":thumbs u", "thumbsup"));
+    }
+
+    #[test]
+    fn matches_after_trailing_space() {
+        assert!(has_shortcode(":smile ", "smile"));
+    }
+
+    #[test]
+    fn replaces_both_words() {
+        let item = list("foo :thumbs u").items.into_iter().next().unwrap();
+        match item.text_edit {
+            Some(CompletionTextEdit::Edit(edit)) => assert_eq!(edit.range.start.character, 4),
+            other => panic!("expected a text edit, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ignores_third_word() {
+        assert!(list(":smile and t").items.is_empty());
+    }
+
+    #[test]
+    fn ignores_space_after_colon() {
+        assert!(list(": smi").items.is_empty());
+    }
+
+    #[test]
+    fn ignores_double_space() {
+        assert!(list(":smile  t").items.is_empty());
     }
 
     #[test]
