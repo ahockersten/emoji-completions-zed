@@ -136,12 +136,11 @@ fn handle_completion(
         return incomplete(vec![]);
     };
 
-    let (colon_pos, query) = match emoji_query(before_cursor) {
-        Some((pos, query)) => (pos, query.to_lowercase()),
-        None => return incomplete(vec![]),
+    let Some((colon_pos, query)) = emoji_query(before_cursor) else {
+        return incomplete(vec![]);
     };
 
-    let scored_emojis = find_matching_emojis(&query);
+    let scored_emojis = find_matching_emojis(query);
 
     let completions: Vec<CompletionItem> = scored_emojis
         .iter()
@@ -174,7 +173,6 @@ fn handle_completion(
                 label,
                 kind: Some(CompletionItemKind::TEXT),
                 detail: Some(scored.name.clone()),
-                insert_text: Some(scored.emoji_char.clone()),
                 filter_text: Some(filter_text),
                 sort_text: Some(sort_text(scored.score)),
                 text_edit: Some(CompletionTextEdit::Edit(TextEdit {

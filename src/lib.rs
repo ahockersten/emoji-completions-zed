@@ -7,7 +7,6 @@ struct EmojiCompletionsExtension {
     cached_binary_path: Option<String>,
 }
 
-#[derive(Clone)]
 struct EmojiServerBinary {
     path: String,
     args: Vec<String>,
@@ -83,7 +82,8 @@ impl EmojiCompletionsExtension {
             _ => "",
         };
 
-        let asset_name: String = format!("emoji-language-server-{}-{}{}", os, arch_str, extension);
+        let base_name = format!("emoji-language-server-{os}-{arch_str}");
+        let asset_name = format!("{base_name}{extension}");
 
         let asset = release
             .assets
@@ -96,12 +96,7 @@ impl EmojiCompletionsExtension {
                 )
             })?;
 
-        let binary_path = format!(
-            "{}-{}{}",
-            asset_name.trim_end_matches(extension),
-            VERSION,
-            extension
-        );
+        let binary_path = format!("{base_name}-{VERSION}{extension}");
 
         if !fs::metadata(&binary_path).is_ok_and(|stat| stat.is_file()) {
             zed::set_language_server_installation_status(

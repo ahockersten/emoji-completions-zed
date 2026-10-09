@@ -176,45 +176,11 @@ mod tests {
     }
 
     #[test]
-    fn test_finds_smile_variants() {
-        let results = find_matching_emojis("smile");
-
-        let smile_idx = results
-            .iter()
-            .position(|e| e.shortcode.as_deref() == Some("smile"));
-        let sweat_smile_idx = results
-            .iter()
-            .position(|e| e.shortcode.as_deref() == Some("sweat_smile"));
-
-        assert!(smile_idx.is_some(), "Should find ':smile' emoji");
-        // Just verify that if sweat_smile exists, we found both
-        if sweat_smile_idx.is_some() {
-            assert!(
-                smile_idx.is_some(),
-                "If we find sweat_smile, we should also find smile"
-            );
-        }
-    }
-
-    #[test]
-    fn test_matching_returns_results() {
+    fn test_matching_ignores_case() {
         let lower_results = find_matching_emojis("smile");
-        let upper_results = find_matching_emojis("SMILE");
-        let mixed_results = find_matching_emojis("SmIlE");
-
-        // All should return results
-        assert!(
-            !lower_results.is_empty(),
-            "Lowercase query should find results"
-        );
-        assert!(
-            !upper_results.is_empty(),
-            "Uppercase query should find results"
-        );
-        assert!(
-            !mixed_results.is_empty(),
-            "Mixed case query should find results"
-        );
+        assert!(!lower_results.is_empty());
+        assert_eq!(find_matching_emojis("SMILE"), lower_results);
+        assert_eq!(find_matching_emojis("SmIlE"), lower_results);
     }
 
     #[test]

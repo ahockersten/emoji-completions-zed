@@ -25,7 +25,7 @@ Zed only starts the server for languages listed in `extension.toml`, so it canno
 ## Developing locally
 
 1. Clone the repository.
-2. Build using `cargo build --release`.
+2. Build using `cargo build --release -p emoji-language-server`.
 3. Point Zed at the built server in your Zed `settings.json`:
    ```json
    "lsp": {
@@ -48,7 +48,7 @@ This project uses immutable tags, which makes releasing a new version a bit more
   git push origin 1.0.0-beta0
   ```
 3. The release will now be built, but it will be marked as a draft. Mark the build as a pre-release in the GitHub UI.
-4. Build locally with `cargo build --release`.
+4. Build locally with `cargo build --release -p emoji-language-server`.
 5. Remove any downloaded `emoji-language-server` binaries from the Zed extensions directory, and remove the `lsp` setting from "Developing locally" if you added it:
    ```sh
    # Linux

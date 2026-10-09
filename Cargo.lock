@@ -83,14 +83,19 @@ dependencies = [
 name = "emoji-completions"
 version = "1.3.1"
 dependencies = [
+ "zed_extension_api",
+]
+
+[[package]]
+name = "emoji-language-server"
+version = "1.3.1"
+dependencies = [
  "emojis",
  "line-index",
  "lsp-server",
  "lsp-types",
  "nucleo-matcher",
- "serde",
  "serde_json",
- "zed_extension_api",
 ]
 
 [[package]]
