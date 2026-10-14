@@ -2,26 +2,22 @@ use emojis::SkinTone;
 use nucleo_matcher::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 
+use crate::teams::TEAMS_CODES;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScoredEmoji {
     pub emoji_char: String,
     pub name: String,
     pub shortcode: Option<String>,
+    pub teams_code: Option<&'static str>,
     pub score: u32,
 }
 
 /// Finds and scores emojis matching the given query, giving each the skin tone where it has one
 pub fn find_matching_emojis(query: &str, skin_tone: SkinTone) -> Vec<ScoredEmoji> {
-    // Each word of the query is matched separately, so `thumbs up` matches `thumbsup`.
-    let pattern = Pattern::new(
-        query,
-        CaseMatching::Ignore,
-        Normalization::Smart,
-        AtomKind::Fuzzy,
-    );
-    if pattern.atoms.is_empty() {
+    let Some(pattern) = query_pattern(query) else {
         return vec![];
-    }
+    };
 
     let mut matcher = Matcher::new(Config::DEFAULT);
     let mut results = Vec::new();
@@ -55,6 +51,7 @@ pub fn find_matching_emojis(query: &str, skin_tone: SkinTone) -> Vec<ScoredEmoji
             emoji_char: toned.as_str().to_string(),
             name: name.to_string(),
             shortcode: shortcode.map(|s| s.to_string()),
+            teams_code: None,
             score,
         });
     }
@@ -63,6 +60,62 @@ pub fn find_matching_emojis(query: &str, skin_tone: SkinTone) -> Vec<ScoredEmoji
     results.sort_by_key(|e| std::cmp::Reverse(e.score));
     results.truncate(100);
 
+    results
+}
+
+// Each word of the query is matched separately, so `thumbs up` matches `thumbsup`.
+fn query_pattern(query: &str) -> Option<Pattern> {
+    let pattern = Pattern::new(
+        query,
+        CaseMatching::Ignore,
+        Normalization::Smart,
+        AtomKind::Fuzzy,
+    );
+    (!pattern.atoms.is_empty()).then_some(pattern)
+}
+
+/// Finds emojis whose Teams code matches the query, followed by emojis whose name or shortcode
+/// matches, as Teams itself lists both.
+pub fn find_teams_emojis(query: &str, skin_tone: SkinTone) -> Vec<ScoredEmoji> {
+    let Some(pattern) = query_pattern(query) else {
+        return vec![];
+    };
+    let mut matcher = Matcher::new(Config::DEFAULT);
+    let mut haystack_buf = vec![];
+    let mut results: Vec<ScoredEmoji> = Vec::new();
+
+    for &(code, emoji_str) in TEAMS_CODES {
+        haystack_buf.clear();
+        let Some(score) = pattern.score(Utf32Str::new(code, &mut haystack_buf), &mut matcher)
+        else {
+            continue;
+        };
+        let emoji = emojis::get(emoji_str).expect("Teams codes only map to known emojis");
+        // Several codes share an emoji, and the best matching code is the one shown.
+        if let Some(existing) = results.iter_mut().find(|e| e.name == emoji.name()) {
+            if score > existing.score {
+                existing.score = score;
+                existing.teams_code = Some(code);
+            }
+            continue;
+        }
+        let toned = emoji.with_skin_tone(skin_tone).unwrap_or(emoji);
+        results.push(ScoredEmoji {
+            emoji_char: toned.as_str().to_string(),
+            name: emoji.name().to_string(),
+            shortcode: emoji.shortcode().map(|s| s.to_string()),
+            teams_code: Some(code),
+            score,
+        });
+    }
+    results.sort_by_key(|e| std::cmp::Reverse(e.score));
+
+    for scored in find_matching_emojis(query, skin_tone) {
+        if !results.iter().any(|e| e.name == scored.name) {
+            results.push(scored);
+        }
+    }
+    results.truncate(100);
     results
 }
 
@@ -230,5 +283,49 @@ mod tests {
     fn test_skin_tone_applies_to_both_people() {
         let results = find_matching_emojis("people holding hands", SkinTone::Dark);
         assert!(results.iter().any(|e| e.emoji_char == "🧑🏿‍🤝‍🧑🏿"));
+    }
+
+    #[test]
+    fn test_teams_code_matches_first() {
+        let results = find_teams_emojis("laugh", SkinTone::Default);
+        assert_eq!(results[0].emoji_char, "😄");
+        assert_eq!(results[0].teams_code, Some("laugh"));
+    }
+
+    #[test]
+    fn test_teams_lists_names_after_codes() {
+        let results = find_teams_emojis("smile", SkinTone::Default);
+        let first_name_match = results
+            .iter()
+            .position(|e| e.teams_code.is_none())
+            .expect("should list name matches");
+        assert!(
+            results[..first_name_match]
+                .iter()
+                .all(|e| e.teams_code.is_some())
+        );
+        assert!(
+            results
+                .iter()
+                .any(|e| e.shortcode.as_deref() == Some("smile"))
+        );
+    }
+
+    #[test]
+    fn test_teams_lists_each_emoji_once() {
+        let results = find_teams_emojis("y", SkinTone::Default);
+        let thumbs_up = results.iter().filter(|e| e.name == "thumbs up").count();
+        assert_eq!(thumbs_up, 1);
+    }
+
+    #[test]
+    fn test_teams_applies_skin_tone() {
+        let results = find_teams_emojis("like", SkinTone::Dark);
+        assert_eq!(results[0].emoji_char, "👍🏿");
+    }
+
+    #[test]
+    fn test_teams_results_limited_to_100() {
+        assert!(find_teams_emojis("e", SkinTone::Default).len() <= 100);
     }
 }

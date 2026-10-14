@@ -8,6 +8,30 @@ A query can be up to two words, so `:thumbs up` finds 👍.
 
 ![Emoji completions demo](example.gif)
 
+## Styles
+
+Three ways of writing emojis are supported, and any of them can be turned on at the same time:
+
+| Style | Typed | Inserts |
+|---|---|---|
+| `slack` (on by default) | `:smi` | 😄 |
+| `emojisense` | `::smi` | `:smile:` |
+| `teams` | `(lau` | 😄 |
+
+Teams style matches the classic Teams codes, such as `(y)` and `(laugh)`, as well as emoji names.
+
+Choose the styles in your Zed `settings.json`:
+
+```json
+"lsp": {
+  "emoji-language-server": {
+    "settings": { "styles": ["emojisense", "slack", "teams"] }
+  }
+}
+```
+
+An empty list turns completions off. Turning on `emojisense` makes `::` at the start of a word trigger completions, as in C++'s `::std::vector`, and turning on `teams` does the same for `(`, as in `if (x`.
+
 ## Skin tone
 
 Emojis that come in skin tones are inserted with the tone set in your Zed `settings.json`:
@@ -15,12 +39,12 @@ Emojis that come in skin tones are inserted with the tone set in your Zed `setti
 ```json
 "lsp": {
   "emoji-language-server": {
-    "initialization_options": { "skin_tone": "medium-dark" }
+    "settings": { "skin_tone": "medium-dark" }
   }
 }
 ```
 
-The values are `default` (yellow, used when the setting is missing), `light`, `medium-light`, `medium`, `medium-dark` and `dark`. Run `editor: restart language server` after changing it.
+The values are `default` (yellow, used when the setting is missing), `light`, `medium-light`, `medium`, `medium-dark` and `dark`.
 
 ## Turning it off for a language
 
@@ -82,7 +106,6 @@ This project uses immutable tags, which makes releasing a new version a bit more
 11. Update the zed-extensions repo to point to the new version, in accordance with their instructions: https://zed.dev/docs/extensions/developing-extensions#updating-an-extension
 
 ## Possible improvements (PRs welcome!)
-- Enable emoji markup support similar to emojisense (e.g. `::smile` inserts `:smile:`)
 - Non-language specific support (I don't think Zed supports this yet? Confirmed here: https://github.com/zed-industries/extensions/pull/3941#pullrequestreview-3500665902). Currently this only works in file types where the language server is explicitly activated.
 
 ## Credits
