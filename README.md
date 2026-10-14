@@ -16,7 +16,7 @@ Three ways of writing emojis are supported, and any of them can be turned on at 
 |---|---|---|
 | `slack` (on by default) | `:smi` | 😄 |
 | `emojisense` | `::smi` | `:smile:` |
-| `teams` | `(lau` | 😆 |
+| `teams` | `(lau` | 😄 |
 
 Teams style matches the classic Teams codes, such as `(y)` and `(laugh)`, as well as emoji names.
 

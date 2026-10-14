@@ -8,7 +8,7 @@ Add two ways of writing emojis next to the existing Slack style, each of which c
 |---|---|---|---|
 | Slack (existing) | `:smi` | 😄 | on |
 | emojisense | `::smi` | `:smile:` | off |
-| Teams | `(lau` | 😆 | off |
+| Teams | `(lau` | 😄 | off |
 
 Any combination of styles can be on at the same time. Settings apply without restarting the language server.
 
@@ -68,11 +68,11 @@ Unchanged: `find_matching_emojis` with the skin tone, inserting the emoji.
 
 ### Teams
 
-- A new `server/src/teams.rs` holds about 100 classic Skype/Teams codes as `(code, emoji)` pairs, such as `("y", "👍")` and `("laugh", "😆")`. Codes with no Unicode equivalent are left out.
+- A new `server/src/teams.rs` holds about 100 classic Skype/Teams codes as `(code, emoji)` pairs, such as `("y", "👍")` and `("laugh", "😄")`. Codes with no Unicode equivalent are left out.
 - The query is fuzzy-matched with the same `nucleo-matcher` pattern against the Teams codes and against the normal names and shortcodes.
 - Teams code matches come first, ordered by score, followed by name and shortcode matches. Emojis already listed are not repeated, and the total is capped at 100.
 - The inserted emoji gets the skin tone where it has one.
-- Labels are `(laugh) 😆` for a Teams code, and `(:smile 😄` for a name or shortcode match.
+- Labels are `(laugh) 😄` for a Teams code, and `(:smile 😄` for a name or shortcode match.
 - The replaced range starts at `(`. If the character right after the cursor is `)`, the range also covers it, because Zed auto-closes `(` in most languages.
 
 ## Testing
