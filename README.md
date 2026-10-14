@@ -25,7 +25,7 @@ Choose the styles in your Zed `settings.json`:
 ```json
 "lsp": {
   "emoji-language-server": {
-    "settings": { "styles": ["slack", "teams"] }
+    "settings": { "styles": ["emojisense", "slack", "teams"] }
   }
 }
 ```
