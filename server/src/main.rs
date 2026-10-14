@@ -13,8 +13,9 @@ use lsp_types::{
     Range, ServerCapabilities, TextDocumentSyncKind, TextEdit,
 };
 
-use matching::find_matching_emojis;
-use settings::Settings;
+use emojis::SkinTone;
+use matching::{ScoredEmoji, find_matching_emojis};
+use settings::{Settings, Style};
 
 fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     let (connection, io_threads) = Connection::stdio();
@@ -149,70 +150,96 @@ fn handle_completion(
         return incomplete(vec![]);
     };
 
-    let Some((colon_pos, query)) = emoji_query(before_cursor) else {
+    let Some((start, style, query)) = emoji_query(before_cursor) else {
         return incomplete(vec![]);
     };
+    if !settings.has(style) {
+        return incomplete(vec![]);
+    }
 
     // Convert UTF-8 byte offset back to UTF-16 for LSP
-    let Some(colon_utf16) = line_index.to_wide(
+    let Some(start_utf16) = line_index.to_wide(
         WideEncoding::Utf16,
         line_index::LineCol {
             line: 0,
-            col: colon_pos as u32,
+            col: start as u32,
         },
     ) else {
         return incomplete(vec![]);
     };
+    let range = Range {
+        start: Position {
+            line: position.line,
+            character: start_utf16.col,
+        },
+        end: position,
+    };
 
-    let scored_emojis = find_matching_emojis(query, settings.skin_tone);
-
-    let completions: Vec<CompletionItem> = scored_emojis
-        .iter()
-        .map(|scored| {
-            let label = if let Some(code) = &scored.shortcode {
-                format!(":{} {}", code, scored.emoji_char)
-            } else {
-                format!(":{} {}", scored.name, scored.emoji_char)
-            };
-
-            let filter_text = format!(
-                "{} {}",
-                scored.shortcode.as_deref().unwrap_or(&scored.name),
-                scored.name
-            );
-
-            CompletionItem {
-                label,
-                kind: Some(CompletionItemKind::TEXT),
-                detail: Some(scored.name.clone()),
-                filter_text: Some(filter_text),
-                sort_text: Some(sort_text(scored.score)),
-                text_edit: Some(CompletionTextEdit::Edit(TextEdit {
-                    range: Range {
-                        start: Position {
-                            line: position.line,
-                            character: colon_utf16.col,
-                        },
-                        end: position,
-                    },
-                    new_text: scored.emoji_char.clone(),
-                })),
-                ..Default::default()
-            }
-        })
-        .collect();
-
+    let completions = match style {
+        Style::Slack => slack_items(query, settings.skin_tone, range),
+        Style::Emojisense => emojisense_items(query, range),
+        Style::Teams => Vec::new(),
+    };
     incomplete(completions)
 }
 
-/// Zed sorts by comparing strings, so higher scores must give strings that sort earlier.
-fn sort_text(score: u32) -> String {
-    format!("{:010}", u32::MAX - score)
+fn slack_items(query: &str, skin_tone: SkinTone, range: Range) -> Vec<CompletionItem> {
+    find_matching_emojis(query, skin_tone)
+        .iter()
+        .enumerate()
+        .map(|(rank, scored)| {
+            let code = scored.shortcode.as_deref().unwrap_or(&scored.name);
+            let label = format!(":{code} {}", scored.emoji_char);
+            completion_item(rank, scored, label, scored.emoji_char.clone(), range)
+        })
+        .collect()
 }
 
-/// Returns the byte position of the colon and the query after it, if the text before the
-/// cursor ends in something like `:smi` or `:thumbs u`.
-fn emoji_query(before_cursor: &str) -> Option<(usize, &str)> {
+/// Shortcodes cannot carry a skin tone, so emojis are matched and shown without one.
+fn emojisense_items(query: &str, range: Range) -> Vec<CompletionItem> {
+    find_matching_emojis(query, SkinTone::Default)
+        .iter()
+        // Emojis without a shortcode have no markup form.
+        .filter_map(|scored| Some((scored, scored.shortcode.as_deref()?)))
+        .enumerate()
+        .map(|(rank, (scored, code))| {
+            let label = format!(":{code}: {}", scored.emoji_char);
+            completion_item(rank, scored, label, format!(":{code}:"), range)
+        })
+        .collect()
+}
+
+fn completion_item(
+    rank: usize,
+    scored: &ScoredEmoji,
+    label: String,
+    new_text: String,
+    range: Range,
+) -> CompletionItem {
+    let filter_text = format!(
+        "{} {}",
+        scored.shortcode.as_deref().unwrap_or(&scored.name),
+        scored.name
+    );
+    CompletionItem {
+        label,
+        kind: Some(CompletionItemKind::TEXT),
+        detail: Some(scored.name.clone()),
+        filter_text: Some(filter_text),
+        sort_text: Some(sort_text(rank)),
+        text_edit: Some(CompletionTextEdit::Edit(TextEdit { range, new_text })),
+        ..Default::default()
+    }
+}
+
+/// Zed sorts by comparing strings, so the rank is zero-padded to keep the order the results came in.
+fn sort_text(rank: usize) -> String {
+    format!("{rank:03}")
+}
+
+/// Returns where the replaced text starts, the style its prefix selects and the query, if the
+/// text before the cursor ends in something like `:smi`, `::thumbs u` or `(lau`.
+fn emoji_query(before_cursor: &str) -> Option<(usize, Style, &str)> {
     let last_word_start = word_start(before_cursor);
     let query_start = match before_cursor[..last_word_start].strip_suffix(' ') {
         // The query is limited to two words, so text typed after an emoji shortcode stops
@@ -226,16 +253,21 @@ fn emoji_query(before_cursor: &str) -> Option<(usize, &str)> {
         }
         None => last_word_start,
     };
-    let colon_pos = query_start.checked_sub(1)?;
-    if !before_cursor[colon_pos..].starts_with(':') {
-        return None;
-    }
-    // Only a colon that starts a word counts, so `std::fs` and `key:value` do not trigger.
-    let starts_word = before_cursor[..colon_pos]
-        .chars()
-        .next_back()
-        .is_none_or(|c| c.is_whitespace() || c == '(');
-    starts_word.then(|| (colon_pos, &before_cursor[query_start..]))
+    let prefix = &before_cursor[..query_start];
+    let (start, style) = if let Some(rest) = prefix.strip_suffix("::") {
+        (rest.len(), Style::Emojisense)
+    } else if let Some(rest) = prefix.strip_suffix(':') {
+        (rest.len(), Style::Slack)
+    } else {
+        (prefix.strip_suffix('(')?.len(), Style::Teams)
+    };
+    // Only a prefix that starts a word counts, so `std::fs`, `key:value` and `foo(bar` do not trigger.
+    let previous = before_cursor[..start].chars().next_back();
+    let starts_word = match style {
+        Style::Teams => previous.is_none_or(char::is_whitespace),
+        Style::Slack | Style::Emojisense => previous.is_none_or(|c| c.is_whitespace() || c == '('),
+    };
+    starts_word.then(|| (start, style, &before_cursor[query_start..]))
 }
 
 /// Returns the byte position where the shortcode-like word at the end of `text` starts.
@@ -255,7 +287,6 @@ fn incomplete(items: Vec<CompletionItem>) -> Option<CompletionResponse> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use emojis::SkinTone;
     use lsp_types::{TextDocumentIdentifier, TextDocumentPositionParams, Uri};
 
     const URI: &str = "file:///test.md";
@@ -357,6 +388,92 @@ mod tests {
 
     fn list(line: &str) -> lsp_types::CompletionList {
         list_at(line, line.encode_utf16().count() as u32)
+    }
+
+    fn list_with(line: &str, settings: &Settings) -> lsp_types::CompletionList {
+        let documents = HashMap::from([(URI.to_string(), line.to_string())]);
+        let character = line.encode_utf16().count() as u32;
+        match handle_completion(&documents, completion_params(character), settings) {
+            Some(CompletionResponse::List(list)) => list,
+            other => panic!("expected a completion list, got {other:?}"),
+        }
+    }
+
+    fn all_styles() -> Settings {
+        Settings {
+            styles: vec![Style::Slack, Style::Emojisense, Style::Teams],
+            ..Settings::default()
+        }
+    }
+
+    fn edit_of(item: CompletionItem) -> TextEdit {
+        match item.text_edit {
+            Some(CompletionTextEdit::Edit(edit)) => edit,
+            other => panic!("expected a text edit, got {other:?}"),
+        }
+    }
+
+    // Fuzzy scores can tie, so tests look items up by label instead of relying on their position.
+    fn item_labeled(list: lsp_types::CompletionList, label: &str) -> CompletionItem {
+        list.items
+            .into_iter()
+            .find(|item| item.label == label)
+            .unwrap_or_else(|| panic!("expected an item labeled {label}"))
+    }
+
+    #[test]
+    fn detects_each_style() {
+        assert_eq!(emoji_query(":smi"), Some((0, Style::Slack, "smi")));
+        assert_eq!(emoji_query("a ::smi"), Some((2, Style::Emojisense, "smi")));
+        assert_eq!(emoji_query("(lau"), Some((0, Style::Teams, "lau")));
+        assert_eq!(
+            emoji_query("a (thumbs u"),
+            Some((2, Style::Teams, "thumbs u"))
+        );
+        assert_eq!(emoji_query("(:smi"), Some((1, Style::Slack, "smi")));
+        assert_eq!(emoji_query("(::smi"), Some((1, Style::Emojisense, "smi")));
+    }
+
+    #[test]
+    fn ignores_prefixes_inside_words() {
+        assert_eq!(emoji_query("foo(bar"), None);
+        assert_eq!(emoji_query("((bar"), None);
+        assert_eq!(emoji_query("std::fs"), None);
+        assert_eq!(emoji_query(":::smi"), None);
+    }
+
+    #[test]
+    fn style_that_is_off_gives_nothing() {
+        assert!(list("::smi").items.is_empty());
+        assert!(list("(lau").items.is_empty());
+        let settings = Settings {
+            styles: vec![],
+            ..Settings::default()
+        };
+        assert!(list_with(":smi", &settings).items.is_empty());
+    }
+
+    #[test]
+    fn emojisense_inserts_shortcode() {
+        let edit = edit_of(item_labeled(
+            list_with("foo ::smile", &all_styles()),
+            ":smile: 😄",
+        ));
+        assert_eq!(edit.new_text, ":smile:");
+        assert_eq!(edit.range.start.character, 4);
+    }
+
+    #[test]
+    fn emojisense_ignores_skin_tone() {
+        let settings = Settings {
+            skin_tone: SkinTone::Dark,
+            ..all_styles()
+        };
+        let edit = edit_of(item_labeled(
+            list_with("::thumbsup", &settings),
+            ":thumbsup: 👍",
+        ));
+        assert_eq!(edit.new_text, ":thumbsup:");
     }
 
     #[test]
@@ -516,13 +633,11 @@ mod tests {
     }
 
     #[test]
-    fn sort_text_orders_higher_scores_first() {
-        let scores = [0, 1, 9, 10, 99, 100, 1000, u16::MAX as u32, u32::MAX];
-        let mut by_text = scores;
-        by_text.sort_by_key(|&score| sort_text(score));
-        let mut by_score = scores;
-        by_score.sort_by(|a, b| b.cmp(a));
-        assert_eq!(by_text, by_score);
+    fn sort_text_keeps_result_order() {
+        let ranks = [0, 1, 9, 10, 99];
+        let mut by_text = ranks;
+        by_text.sort_by_key(|&rank| sort_text(rank));
+        assert_eq!(by_text, ranks);
     }
 
     #[test]

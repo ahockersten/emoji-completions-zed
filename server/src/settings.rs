@@ -31,6 +31,10 @@ impl Settings {
             skin_tone: skin_tone_setting(value.get("skin_tone")),
         }
     }
+
+    pub fn has(&self, style: Style) -> bool {
+        self.styles.contains(&style)
+    }
 }
 
 fn styles_setting(value: Option<&Value>) -> Vec<Style> {
@@ -93,6 +97,8 @@ mod tests {
         let settings =
             Settings::from_json(&serde_json::json!({ "styles": ["emojisense", "teams"] }));
         assert_eq!(settings.styles, vec![Style::Emojisense, Style::Teams]);
+        assert!(!settings.has(Style::Slack));
+        assert!(settings.has(Style::Teams));
     }
 
     #[test]
