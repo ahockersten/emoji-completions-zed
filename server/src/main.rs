@@ -6,12 +6,14 @@ use std::collections::HashMap;
 use std::error::Error;
 
 use line_index::{LineIndex, WideEncoding};
-use lsp_server::{Connection, ErrorCode, Message, Notification, Response};
+use lsp_server::{Connection, ErrorCode, Message, Notification, Request, RequestId, Response};
 use lsp_types::{
     CompletionItem, CompletionItemKind, CompletionList, CompletionOptions, CompletionParams,
-    CompletionResponse, CompletionTextEdit, DidChangeConfigurationParams,
-    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams, Position,
-    Range, ServerCapabilities, TextDocumentSyncKind, TextEdit,
+    CompletionRegistrationOptions, CompletionResponse, CompletionTextEdit,
+    DidChangeConfigurationParams, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
+    DidOpenTextDocumentParams, Position, Range, Registration, RegistrationParams,
+    ServerCapabilities, TextDocumentRegistrationOptions, TextDocumentSyncKind, TextEdit,
+    Unregistration, UnregistrationParams,
 };
 
 use emojis::SkinTone;
@@ -21,27 +23,85 @@ use settings::{Settings, Style};
 fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     let (connection, io_threads) = Connection::stdio();
 
-    let server_capabilities = serde_json::to_value(&ServerCapabilities {
-        text_document_sync: Some(TextDocumentSyncKind::FULL.into()),
-        completion_provider: Some(CompletionOptions {
-            // A space is a trigger so Zed asks again for the second word of a query like `:thumbs up`.
-            trigger_characters: Some(vec![":".to_string(), " ".to_string(), "(".to_string()]),
-            resolve_provider: Some(false),
-            ..Default::default()
-        }),
-        ..Default::default()
-    })
-    .unwrap();
+    let (id, initialize_params) = connection.initialize_start()?;
+    let dynamic_registration = supports_dynamic_completion(&initialize_params);
+    // Without dynamic registration `(` can only be declared now, before the settings are known.
+    let capabilities = serde_json::to_value(server_capabilities(!dynamic_registration)).unwrap();
+    connection.initialize_finish(id, serde_json::json!({ "capabilities": capabilities }))?;
 
-    connection.initialize(server_capabilities)?;
-    main_loop(connection)?;
+    main_loop(connection, dynamic_registration)?;
     io_threads.join()?;
     Ok(())
 }
 
-fn main_loop(connection: Connection) -> Result<(), Box<dyn Error + Sync + Send>> {
+fn server_capabilities(teams_trigger: bool) -> ServerCapabilities {
+    // A space is a trigger so Zed asks again for the second word of a query like `:thumbs up`.
+    let mut trigger_characters = vec![":".to_string(), " ".to_string()];
+    if teams_trigger {
+        trigger_characters.push("(".to_string());
+    }
+    ServerCapabilities {
+        text_document_sync: Some(TextDocumentSyncKind::FULL.into()),
+        completion_provider: Some(CompletionOptions {
+            trigger_characters: Some(trigger_characters),
+            resolve_provider: Some(false),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+}
+
+/// Returns whether the client accepts completion trigger characters registered after startup.
+fn supports_dynamic_completion(initialize_params: &serde_json::Value) -> bool {
+    initialize_params
+        .pointer("/capabilities/textDocument/completion/dynamicRegistration")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+}
+
+const TEAMS_REGISTRATION_ID: &str = "teams-trigger";
+
+/// Builds the request that adds `(` as a completion trigger character, or removes it again.
+fn teams_trigger_request(id: RequestId, register: bool) -> Request {
+    let method = "textDocument/completion".to_string();
+    if register {
+        let options = CompletionRegistrationOptions {
+            text_document_registration_options: TextDocumentRegistrationOptions {
+                document_selector: None,
+            },
+            completion_options: CompletionOptions {
+                trigger_characters: Some(vec!["(".to_string()]),
+                resolve_provider: Some(false),
+                ..Default::default()
+            },
+        };
+        let params = RegistrationParams {
+            registrations: vec![Registration {
+                id: TEAMS_REGISTRATION_ID.to_string(),
+                method,
+                register_options: Some(serde_json::to_value(options).unwrap()),
+            }],
+        };
+        Request::new(id, "client/registerCapability".to_string(), params)
+    } else {
+        let params = UnregistrationParams {
+            unregisterations: vec![Unregistration {
+                id: TEAMS_REGISTRATION_ID.to_string(),
+                method,
+            }],
+        };
+        Request::new(id, "client/unregisterCapability".to_string(), params)
+    }
+}
+
+fn main_loop(
+    connection: Connection,
+    dynamic_registration: bool,
+) -> Result<(), Box<dyn Error + Sync + Send>> {
     let mut documents: HashMap<String, String> = HashMap::new();
     let mut settings = Settings::default();
+    let mut teams_registered = false;
+    let mut next_request_id = 0;
 
     for msg in connection.receiver.iter() {
         match msg {
@@ -72,12 +132,23 @@ fn main_loop(connection: Connection) -> Result<(), Box<dyn Error + Sync + Send>>
                 };
                 connection.sender.send(Message::Response(resp))?;
             }
+            // The server only sends trigger registrations, whose replies need no action.
             Message::Response(_) => {}
             Message::Notification(not) if not.method == "workspace/didChangeConfiguration" => {
                 match not
                     .extract::<DidChangeConfigurationParams>("workspace/didChangeConfiguration")
                 {
-                    Ok(params) => settings = Settings::from_json(&params.settings),
+                    Ok(params) => {
+                        settings = Settings::from_json(&params.settings);
+                        let teams = settings.has(Style::Teams);
+                        if dynamic_registration && teams != teams_registered {
+                            next_request_id += 1;
+                            let req =
+                                teams_trigger_request(RequestId::from(next_request_id), teams);
+                            connection.sender.send(Message::Request(req))?;
+                            teams_registered = teams;
+                        }
+                    }
                     Err(e) => eprintln!("ignoring notification: {e}"),
                 }
             }
@@ -332,9 +403,12 @@ mod tests {
 
     type ServerThread = std::thread::JoinHandle<Result<(), Box<dyn Error + Sync + Send>>>;
 
-    fn start_server() -> (Connection, ServerThread) {
+    fn start_server(dynamic_registration: bool) -> (Connection, ServerThread) {
         let (server, client) = Connection::memory();
-        (client, std::thread::spawn(move || main_loop(server)))
+        (
+            client,
+            std::thread::spawn(move || main_loop(server, dynamic_registration)),
+        )
     }
 
     fn notify(client: &Connection, method: &str, params: serde_json::Value) {
@@ -369,9 +443,89 @@ mod tests {
         }
     }
 
+    fn set_styles(client: &Connection, styles: &[&str]) {
+        notify(
+            client,
+            "workspace/didChangeConfiguration",
+            serde_json::json!({ "settings": { "styles": styles } }),
+        );
+    }
+
+    fn next_request(client: &Connection) -> lsp_server::Request {
+        match client.receiver.recv().unwrap() {
+            Message::Request(req) => req,
+            other => panic!("expected a request, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn registers_teams_trigger_while_teams_is_on() {
+        let (client, server_thread) = start_server(true);
+
+        set_styles(&client, &["teams"]);
+        let req = next_request(&client);
+        assert_eq!(req.method, "client/registerCapability");
+        assert_eq!(
+            req.params["registrations"][0]["registerOptions"]["triggerCharacters"],
+            serde_json::json!(["("])
+        );
+
+        // The same setting again sends nothing, so the next request is the unregistration.
+        set_styles(&client, &["slack", "teams"]);
+        set_styles(&client, &["slack"]);
+        let req = next_request(&client);
+        assert_eq!(req.method, "client/unregisterCapability");
+        assert_eq!(
+            req.params["unregisterations"][0]["id"],
+            TEAMS_REGISTRATION_ID
+        );
+
+        drop(client);
+        server_thread.join().unwrap().unwrap();
+    }
+
+    #[test]
+    fn does_not_register_without_client_support() {
+        let (client, server_thread) = start_server(false);
+        set_styles(&client, &["teams"]);
+        did_open(&client, "(lau");
+        let params = serde_json::to_value(completion_params(4)).unwrap();
+        // A registration request would arrive before this response and fail the helper.
+        let resp = request(&client, 1, "textDocument/completion", params);
+        assert!(resp.response_result.is_ok());
+
+        drop(client);
+        server_thread.join().unwrap().unwrap();
+    }
+
+    #[test]
+    fn declares_teams_trigger_at_startup_only_when_asked() {
+        let triggers = |teams| {
+            server_capabilities(teams)
+                .completion_provider
+                .unwrap()
+                .trigger_characters
+                .unwrap()
+        };
+        assert!(triggers(true).contains(&"(".to_string()));
+        assert!(!triggers(false).contains(&"(".to_string()));
+        assert!(triggers(false).contains(&":".to_string()));
+    }
+
+    #[test]
+    fn reads_dynamic_registration_support() {
+        let supported = serde_json::json!({
+            "capabilities": { "textDocument": { "completion": { "dynamicRegistration": true } } }
+        });
+        assert!(supports_dynamic_completion(&supported));
+        assert!(!supports_dynamic_completion(
+            &serde_json::json!({ "capabilities": {} })
+        ));
+    }
+
     #[test]
     fn configuration_changes_apply_to_later_completions() {
-        let (client, server_thread) = start_server();
+        let (client, server_thread) = start_server(false);
         did_open(&client, ":thumbsup");
         let params = serde_json::to_value(completion_params(9)).unwrap();
 
@@ -661,7 +815,7 @@ mod tests {
         use lsp_server::{Request, RequestId};
 
         let (server, client) = Connection::memory();
-        let server_thread = std::thread::spawn(move || main_loop(server));
+        let server_thread = std::thread::spawn(move || main_loop(server, false));
         let send_request = |id: i32, method: &str, params: serde_json::Value| {
             let req = Request::new(RequestId::from(id), method.to_string(), params);
             client.sender.send(Message::Request(req)).unwrap();
