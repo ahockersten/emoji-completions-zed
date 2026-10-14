@@ -30,10 +30,8 @@ Users configure the server through `lsp.emoji-language-server.settings`:
 ### How settings reach the server
 
 - `src/lib.rs` implements `language_server_workspace_configuration`, returning `LspSettings::for_worktree("emoji-language-server", worktree)` `.settings`.
-- The server keeps a `Settings { styles, skin_tone }` value, which `main_loop` and `handle_completion` take in place of the current `skin_tone` argument. It starts from the defaults.
-- After initialization the server sends a `workspace/configuration` request for the section `emoji-language-server`. The reply arrives in the `Message::Response` branch of `main_loop`, which replaces the settings with it.
-- On `workspace/didChangeConfiguration` the server replaces the settings with the notification's `settings` payload. If Zed turns out to send an empty payload, the server sends a new `workspace/configuration` request instead.
-- During implementation, check in Zed that it answers `workspace/configuration` from the extension's `language_server_workspace_configuration`, and what it puts in `didChangeConfiguration`.
+- The server keeps a `Settings { styles, skin_tone }` value, which `main_loop` and `handle_completion` use in place of the current `skin_tone` argument. It starts from the defaults.
+- On `workspace/didChangeConfiguration` the server replaces the settings with the notification's `settings` payload. Zed sends this notification with the full settings right after `initialized` and again whenever they change (`crates/project/src/lsp_store.rs`), so the server never sends a `workspace/configuration` request.
 
 ## Triggers
 
@@ -54,7 +52,7 @@ Users configure the server through `lsp.emoji-language-server.settings`:
 - The server declares `:` and space at startup.
 - If the client reports `textDocument.completion.dynamicRegistration`, the server sends `client/registerCapability` for `textDocument/completion` with trigger character `(` and a fixed registration id whenever the settings turn Teams on, and `client/unregisterCapability` with that id when they turn it off. It only sends these when Teams' on/off state changes. Replies to these requests are ignored.
 - If the client does not report dynamic registration, `(` is declared at startup.
-- During implementation, check that Zed does not send one completion request per registration, which would show each item twice. If it does, always declare `(` at startup instead of registering it.
+- Zed sends one completion request per server, not per registration, so the extra registration does not duplicate items. This is still confirmed by the manual check.
 
 ## Matching and inserted text
 
@@ -88,7 +86,7 @@ Unchanged: `find_matching_emojis` with the skin tone, inserting the emoji.
 - **`teams.rs` tests:** every code's emoji is known to `emojis::get`, codes are unique, and a Teams code match is listed before name matches.
 - **Protocol test**, extending the `Connection::memory()` test:
   - a `didChangeConfiguration` that turns Teams on makes the server send `client/registerCapability`, and turning it off sends `client/unregisterCapability`;
-  - a reply to `workspace/configuration` updates the settings;
+  - a `didChangeConfiguration` with a new `skin_tone` changes the inserted emoji;
   - with no dynamic registration in the client capabilities, `(` is among the startup trigger characters.
 - **Manual check in Zed** with a dev build:
   - settings apply without a restart;
