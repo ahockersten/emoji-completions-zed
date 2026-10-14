@@ -1,5 +1,6 @@
 mod matching;
 mod settings;
+mod teams;
 
 use std::collections::HashMap;
 use std::error::Error;
@@ -14,7 +15,7 @@ use lsp_types::{
 };
 
 use emojis::SkinTone;
-use matching::{ScoredEmoji, find_matching_emojis};
+use matching::{ScoredEmoji, find_matching_emojis, find_teams_emojis};
 use settings::{Settings, Style};
 
 fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
@@ -24,7 +25,7 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
         text_document_sync: Some(TextDocumentSyncKind::FULL.into()),
         completion_provider: Some(CompletionOptions {
             // A space is a trigger so Zed asks again for the second word of a query like `:thumbs up`.
-            trigger_characters: Some(vec![":".to_string(), " ".to_string()]),
+            trigger_characters: Some(vec![":".to_string(), " ".to_string(), "(".to_string()]),
             resolve_provider: Some(false),
             ..Default::default()
         }),
@@ -167,18 +168,23 @@ fn handle_completion(
     ) else {
         return incomplete(vec![]);
     };
+    let mut end = position;
+    // Zed closes `(` as it is typed, so a `)` right after the cursor would be left behind the emoji.
+    if style == Style::Teams && line_text[byte_offset..].starts_with(')') {
+        end.character += 1;
+    }
     let range = Range {
         start: Position {
             line: position.line,
             character: start_utf16.col,
         },
-        end: position,
+        end,
     };
 
     let completions = match style {
         Style::Slack => slack_items(query, settings.skin_tone, range),
         Style::Emojisense => emojisense_items(query, range),
-        Style::Teams => Vec::new(),
+        Style::Teams => teams_items(query, settings.skin_tone, range),
     };
     incomplete(completions)
 }
@@ -209,6 +215,24 @@ fn emojisense_items(query: &str, range: Range) -> Vec<CompletionItem> {
         .collect()
 }
 
+fn teams_items(query: &str, skin_tone: SkinTone, range: Range) -> Vec<CompletionItem> {
+    find_teams_emojis(query, skin_tone)
+        .iter()
+        .enumerate()
+        .map(|(rank, scored)| {
+            let label = match scored.teams_code {
+                Some(code) => format!("({code}) {}", scored.emoji_char),
+                None => format!(
+                    "(:{} {}",
+                    scored.shortcode.as_deref().unwrap_or(&scored.name),
+                    scored.emoji_char
+                ),
+            };
+            completion_item(rank, scored, label, scored.emoji_char.clone(), range)
+        })
+        .collect()
+}
+
 fn completion_item(
     rank: usize,
     scored: &ScoredEmoji,
@@ -216,11 +240,12 @@ fn completion_item(
     new_text: String,
     range: Range,
 ) -> CompletionItem {
-    let filter_text = format!(
-        "{} {}",
-        scored.shortcode.as_deref().unwrap_or(&scored.name),
-        scored.name
-    );
+    // Zed filters the items again as the user types, so a Teams code like `y` must be in the text it filters on.
+    let code = scored.shortcode.as_deref().unwrap_or(&scored.name);
+    let filter_text = match scored.teams_code {
+        Some(teams_code) => format!("{teams_code} {code} {}", scored.name),
+        None => format!("{code} {}", scored.name),
+    };
     CompletionItem {
         label,
         kind: Some(CompletionItemKind::TEXT),
@@ -413,6 +438,10 @@ mod tests {
         }
     }
 
+    fn first_edit(list: lsp_types::CompletionList) -> TextEdit {
+        edit_of(list.items.into_iter().next().expect("expected an item"))
+    }
+
     // Fuzzy scores can tie, so tests look items up by label instead of relying on their position.
     fn item_labeled(list: lsp_types::CompletionList, label: &str) -> CompletionItem {
         list.items
@@ -474,6 +503,43 @@ mod tests {
             ":thumbsup: 👍",
         ));
         assert_eq!(edit.new_text, ":thumbsup:");
+    }
+
+    #[test]
+    fn teams_inserts_emoji_for_code() {
+        let item = item_labeled(list_with("(y", &all_styles()), "(y) 👍");
+        assert!(item.filter_text.as_deref().unwrap().starts_with("y "));
+        assert_eq!(edit_of(item).new_text, "👍");
+    }
+
+    #[test]
+    fn teams_labels_name_matches() {
+        item_labeled(list_with("(smile", &all_styles()), "(:smile 😄");
+    }
+
+    #[test]
+    fn teams_replaces_closing_parenthesis() {
+        let documents = HashMap::from([(URI.to_string(), "a (lau) b".to_string())]);
+        let Some(CompletionResponse::List(list)) =
+            handle_completion(&documents, completion_params(6), &all_styles())
+        else {
+            panic!("expected a completion list");
+        };
+        let edit = first_edit(list);
+        assert_eq!(edit.range.start.character, 2);
+        assert_eq!(edit.range.end.character, 7);
+    }
+
+    #[test]
+    fn teams_range_ends_at_cursor_without_parenthesis() {
+        let edit = first_edit(list_with("(lau", &all_styles()));
+        assert_eq!(edit.range.end.character, 4);
+    }
+
+    #[test]
+    fn teams_range_start_counts_utf16() {
+        let edit = first_edit(list_with("😀 (lau", &all_styles()));
+        assert_eq!(edit.range.start.character, 3);
     }
 
     #[test]
