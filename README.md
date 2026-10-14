@@ -8,6 +8,20 @@ A query can be up to two words, so `:thumbs up` finds 👍.
 
 ![Emoji completions demo](example.gif)
 
+## Skin tone
+
+Emojis that come in skin tones are inserted with the tone set in your Zed `settings.json`:
+
+```json
+"lsp": {
+  "emoji-language-server": {
+    "initialization_options": { "skin_tone": "medium-dark" }
+  }
+}
+```
+
+The values are `default` (yellow, used when the setting is missing), `light`, `medium-light`, `medium`, `medium-dark` and `dark`. Run `editor: restart language server` after changing it.
+
 ## Turning it off for a language
 
 Add this to your Zed `settings.json`, using the language name Zed shows in the status bar:
@@ -68,7 +82,6 @@ This project uses immutable tags, which makes releasing a new version a bit more
 11. Update the zed-extensions repo to point to the new version, in accordance with their instructions: https://zed.dev/docs/extensions/developing-extensions#updating-an-extension
 
 ## Possible improvements (PRs welcome!)
-- Add support for skin tone modifiers.
 - Enable emoji markup support similar to emojisense (e.g. `::smile` inserts `:smile:`)
 - Non-language specific support (I don't think Zed supports this yet? Confirmed here: https://github.com/zed-industries/extensions/pull/3941#pullrequestreview-3500665902). Currently this only works in file types where the language server is explicitly activated.
 

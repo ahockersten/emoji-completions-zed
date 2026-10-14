@@ -1,3 +1,4 @@
+use emojis::SkinTone;
 use nucleo_matcher::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 
@@ -9,8 +10,8 @@ pub struct ScoredEmoji {
     pub score: u32,
 }
 
-/// Finds and scores emojis matching the given query
-pub fn find_matching_emojis(query: &str) -> Vec<ScoredEmoji> {
+/// Finds and scores emojis matching the given query, giving each the skin tone where it has one
+pub fn find_matching_emojis(query: &str, skin_tone: SkinTone) -> Vec<ScoredEmoji> {
     // Each word of the query is matched separately, so `thumbs up` matches `thumbsup`.
     let pattern = Pattern::new(
         query,
@@ -49,8 +50,9 @@ pub fn find_matching_emojis(query: &str) -> Vec<ScoredEmoji> {
             },
         };
 
+        let toned = emoji.with_skin_tone(skin_tone).unwrap_or(emoji);
         results.push(ScoredEmoji {
-            emoji_char: emoji.as_str().to_string(),
+            emoji_char: toned.as_str().to_string(),
             name: name.to_string(),
             shortcode: shortcode.map(|s| s.to_string()),
             score,
@@ -70,7 +72,7 @@ mod tests {
 
     #[test]
     fn test_finds_smile_emoji() {
-        let results = find_matching_emojis("smile");
+        let results = find_matching_emojis("smile", SkinTone::Default);
 
         assert!(!results.is_empty(), "Should find emojis matching 'smile'");
 
@@ -83,7 +85,7 @@ mod tests {
 
     #[test]
     fn test_finds_multiple_smile_variants() {
-        let results = find_matching_emojis("smile");
+        let results = find_matching_emojis("smile", SkinTone::Default);
 
         // Should find multiple emojis with "smile" in them
         assert!(
@@ -108,7 +110,7 @@ mod tests {
 
     #[test]
     fn test_finds_heart_emoji() {
-        let results = find_matching_emojis("heart");
+        let results = find_matching_emojis("heart", SkinTone::Default);
 
         assert!(!results.is_empty(), "Should find emojis matching 'heart'");
 
@@ -120,7 +122,7 @@ mod tests {
 
     #[test]
     fn test_finds_cat_emoji() {
-        let results = find_matching_emojis("cat");
+        let results = find_matching_emojis("cat", SkinTone::Default);
 
         assert!(!results.is_empty(), "Should find emojis matching 'cat'");
 
@@ -132,7 +134,7 @@ mod tests {
 
     #[test]
     fn test_finds_fire_emoji() {
-        let results = find_matching_emojis("fire");
+        let results = find_matching_emojis("fire", SkinTone::Default);
 
         assert!(!results.is_empty(), "Should find emojis matching 'fire'");
 
@@ -144,13 +146,13 @@ mod tests {
 
     #[test]
     fn test_empty_query_returns_nothing() {
-        let results = find_matching_emojis("");
+        let results = find_matching_emojis("", SkinTone::Default);
         assert!(results.is_empty(), "Empty query should return no results");
     }
 
     #[test]
     fn test_results_limited_to_100() {
-        let results = find_matching_emojis("e");
+        let results = find_matching_emojis("e", SkinTone::Default);
         assert!(
             results.len() <= 100,
             "Results should be limited to 100, got {}",
@@ -160,7 +162,7 @@ mod tests {
 
     #[test]
     fn test_scores_are_ordered() {
-        let results = find_matching_emojis("smile");
+        let results = find_matching_emojis("smile", SkinTone::Default);
 
         // Verify that results are sorted by score (descending)
         for i in 1..results.len() {
@@ -177,31 +179,56 @@ mod tests {
 
     #[test]
     fn test_matching_ignores_case() {
-        let lower_results = find_matching_emojis("smile");
+        let lower_results = find_matching_emojis("smile", SkinTone::Default);
         assert!(!lower_results.is_empty());
-        assert_eq!(find_matching_emojis("SMILE"), lower_results);
-        assert_eq!(find_matching_emojis("SmIlE"), lower_results);
+        assert_eq!(
+            find_matching_emojis("SMILE", SkinTone::Default),
+            lower_results
+        );
+        assert_eq!(
+            find_matching_emojis("SmIlE", SkinTone::Default),
+            lower_results
+        );
     }
 
     #[test]
     fn test_whitespace_query_returns_nothing() {
-        assert!(find_matching_emojis(" ").is_empty());
+        assert!(find_matching_emojis(" ", SkinTone::Default).is_empty());
     }
 
     #[test]
     fn test_matches_two_words() {
-        let results = find_matching_emojis("thumbs up");
+        let results = find_matching_emojis("thumbs up", SkinTone::Default);
         assert!(results.iter().any(|e| e.emoji_char == "👍"));
     }
 
     #[test]
     fn test_matches_second_shortcode() {
-        let results = find_matching_emojis("thumbsup");
+        let results = find_matching_emojis("thumbsup", SkinTone::Default);
 
         let thumbs_up = results
             .iter()
             .find(|e| e.emoji_char == "👍")
             .expect("Should find 👍");
         assert_eq!(thumbs_up.shortcode.as_deref(), Some("thumbsup"));
+    }
+
+    #[test]
+    fn test_applies_skin_tone() {
+        let results = find_matching_emojis("thumbsup", SkinTone::Dark);
+        assert_eq!(results[0].emoji_char, "👍🏿");
+        assert_eq!(results[0].shortcode.as_deref(), Some("thumbsup"));
+    }
+
+    #[test]
+    fn test_skin_tone_leaves_other_emojis_alone() {
+        let results = find_matching_emojis("sunglasses", SkinTone::Dark);
+        assert!(results.iter().any(|e| e.emoji_char == "😎"));
+    }
+
+    #[test]
+    fn test_skin_tone_applies_to_both_people() {
+        let results = find_matching_emojis("people holding hands", SkinTone::Dark);
+        assert!(results.iter().any(|e| e.emoji_char == "🧑🏿‍🤝‍🧑🏿"));
     }
 }
