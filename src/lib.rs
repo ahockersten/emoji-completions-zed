@@ -160,6 +160,17 @@ impl zed::Extension for EmojiCompletionsExtension {
             env: binary.env,
         })
     }
+
+    fn language_server_workspace_configuration(
+        &mut self,
+        _language_server_id: &LanguageServerId,
+        worktree: &zed::Worktree,
+    ) -> Result<Option<zed::serde_json::Value>> {
+        // Zed sends this to the server on start and on every settings change, so it needs no restart.
+        Ok(LspSettings::for_worktree("emoji-language-server", worktree)
+            .ok()
+            .and_then(|settings| settings.settings))
+    }
 }
 
 zed::register_extension!(EmojiCompletionsExtension);

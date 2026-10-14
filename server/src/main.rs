@@ -1,4 +1,5 @@
 mod matching;
+mod settings;
 
 use std::collections::HashMap;
 use std::error::Error;
@@ -7,13 +8,13 @@ use line_index::{LineIndex, WideEncoding};
 use lsp_server::{Connection, ErrorCode, Message, Notification, Response};
 use lsp_types::{
     CompletionItem, CompletionItemKind, CompletionList, CompletionOptions, CompletionParams,
-    CompletionResponse, CompletionTextEdit, DidChangeTextDocumentParams,
-    DidCloseTextDocumentParams, DidOpenTextDocumentParams, Position, Range, ServerCapabilities,
-    TextDocumentSyncKind, TextEdit,
+    CompletionResponse, CompletionTextEdit, DidChangeConfigurationParams,
+    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams, Position,
+    Range, ServerCapabilities, TextDocumentSyncKind, TextEdit,
 };
 
-use emojis::SkinTone;
 use matching::find_matching_emojis;
+use settings::Settings;
 
 fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     let (connection, io_threads) = Connection::stdio();
@@ -30,37 +31,15 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     })
     .unwrap();
 
-    let initialization_params = connection.initialize(server_capabilities)?;
-    let skin_tone = skin_tone_setting(initialization_params.get("initializationOptions"));
-    main_loop(connection, skin_tone)?;
+    connection.initialize(server_capabilities)?;
+    main_loop(connection)?;
     io_threads.join()?;
     Ok(())
 }
 
-/// Reads `skin_tone` from the initialization options, using the default tone if it is missing or unknown.
-fn skin_tone_setting(options: Option<&serde_json::Value>) -> SkinTone {
-    let Some(value) = options.and_then(|o| o.get("skin_tone")) else {
-        return SkinTone::Default;
-    };
-    match value.as_str() {
-        Some("default") => SkinTone::Default,
-        Some("light") => SkinTone::Light,
-        Some("medium-light") => SkinTone::MediumLight,
-        Some("medium") => SkinTone::Medium,
-        Some("medium-dark") => SkinTone::MediumDark,
-        Some("dark") => SkinTone::Dark,
-        _ => {
-            eprintln!("ignoring unknown skin_tone {value}");
-            SkinTone::Default
-        }
-    }
-}
-
-fn main_loop(
-    connection: Connection,
-    skin_tone: SkinTone,
-) -> Result<(), Box<dyn Error + Sync + Send>> {
+fn main_loop(connection: Connection) -> Result<(), Box<dyn Error + Sync + Send>> {
     let mut documents: HashMap<String, String> = HashMap::new();
+    let mut settings = Settings::default();
 
     for msg in connection.receiver.iter() {
         match msg {
@@ -74,7 +53,7 @@ fn main_loop(
                         match req.extract::<CompletionParams>("textDocument/completion") {
                             Ok((id, params)) => Response::new_ok(
                                 id,
-                                handle_completion(&documents, params, skin_tone),
+                                handle_completion(&documents, params, &settings),
                             ),
                             Err(e) => Response::new_err(
                                 id,
@@ -92,6 +71,14 @@ fn main_loop(
                 connection.sender.send(Message::Response(resp))?;
             }
             Message::Response(_) => {}
+            Message::Notification(not) if not.method == "workspace/didChangeConfiguration" => {
+                match not
+                    .extract::<DidChangeConfigurationParams>("workspace/didChangeConfiguration")
+                {
+                    Ok(params) => settings = Settings::from_json(&params.settings),
+                    Err(e) => eprintln!("ignoring notification: {e}"),
+                }
+            }
             Message::Notification(not) => {
                 // A malformed notification should not take down completions for every open file.
                 if let Err(e) = handle_notification(&mut documents, not) {
@@ -133,7 +120,7 @@ fn handle_notification(
 fn handle_completion(
     documents: &HashMap<String, String>,
     params: CompletionParams,
-    skin_tone: SkinTone,
+    settings: &Settings,
 ) -> Option<CompletionResponse> {
     let uri = params.text_document_position.text_document.uri.to_string();
     let text = documents.get(&uri)?;
@@ -177,7 +164,7 @@ fn handle_completion(
         return incomplete(vec![]);
     };
 
-    let scored_emojis = find_matching_emojis(query, skin_tone);
+    let scored_emojis = find_matching_emojis(query, settings.skin_tone);
 
     let completions: Vec<CompletionItem> = scored_emojis
         .iter()
@@ -268,6 +255,7 @@ fn incomplete(items: Vec<CompletionItem>) -> Option<CompletionResponse> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use emojis::SkinTone;
     use lsp_types::{TextDocumentIdentifier, TextDocumentPositionParams, Uri};
 
     const URI: &str = "file:///test.md";
@@ -286,9 +274,78 @@ mod tests {
         }
     }
 
+    type ServerThread = std::thread::JoinHandle<Result<(), Box<dyn Error + Sync + Send>>>;
+
+    fn start_server() -> (Connection, ServerThread) {
+        let (server, client) = Connection::memory();
+        (client, std::thread::spawn(move || main_loop(server)))
+    }
+
+    fn notify(client: &Connection, method: &str, params: serde_json::Value) {
+        let not = Notification::new(method.to_string(), params);
+        client.sender.send(Message::Notification(not)).unwrap();
+    }
+
+    fn request(client: &Connection, id: i32, method: &str, params: serde_json::Value) -> Response {
+        let req = lsp_server::Request::new(id.into(), method.to_string(), params);
+        client.sender.send(Message::Request(req)).unwrap();
+        match client.receiver.recv().unwrap() {
+            Message::Response(resp) => resp,
+            other => panic!("expected a response, got {other:?}"),
+        }
+    }
+
+    fn did_open(client: &Connection, text: &str) {
+        notify(
+            client,
+            "textDocument/didOpen",
+            serde_json::json!({
+                "textDocument": { "uri": URI, "languageId": "markdown", "version": 1, "text": text }
+            }),
+        );
+    }
+
+    fn inserted_text(resp: Response) -> String {
+        let list: CompletionList = serde_json::from_value(resp.response_result.unwrap()).unwrap();
+        match &list.items[0].text_edit {
+            Some(CompletionTextEdit::Edit(edit)) => edit.new_text.clone(),
+            other => panic!("expected a text edit, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn configuration_changes_apply_to_later_completions() {
+        let (client, server_thread) = start_server();
+        did_open(&client, ":thumbsup");
+        let params = serde_json::to_value(completion_params(9)).unwrap();
+
+        notify(
+            &client,
+            "workspace/didChangeConfiguration",
+            serde_json::json!({ "settings": { "skin_tone": "dark" } }),
+        );
+        let resp = request(&client, 1, "textDocument/completion", params.clone());
+        assert_eq!(inserted_text(resp), "👍🏿");
+
+        notify(
+            &client,
+            "workspace/didChangeConfiguration",
+            serde_json::json!({ "settings": null }),
+        );
+        let resp = request(&client, 2, "textDocument/completion", params);
+        assert_eq!(inserted_text(resp), "👍");
+
+        drop(client);
+        server_thread.join().unwrap().unwrap();
+    }
+
     fn complete_at(line: &str, character: u32) -> Option<CompletionResponse> {
         let documents = HashMap::from([(URI.to_string(), line.to_string())]);
-        handle_completion(&documents, completion_params(character), SkinTone::Default)
+        handle_completion(
+            &documents,
+            completion_params(character),
+            &Settings::default(),
+        )
     }
 
     fn list_at(line: &str, character: u32) -> lsp_types::CompletionList {
@@ -421,7 +478,7 @@ mod tests {
         use lsp_server::{Request, RequestId};
 
         let (server, client) = Connection::memory();
-        let server_thread = std::thread::spawn(move || main_loop(server, SkinTone::Default));
+        let server_thread = std::thread::spawn(move || main_loop(server));
         let send_request = |id: i32, method: &str, params: serde_json::Value| {
             let req = Request::new(RequestId::from(id), method.to_string(), params);
             client.sender.send(Message::Request(req)).unwrap();
@@ -469,40 +526,16 @@ mod tests {
     }
 
     #[test]
-    fn reads_each_skin_tone() {
-        let cases = [
-            ("default", SkinTone::Default),
-            ("light", SkinTone::Light),
-            ("medium-light", SkinTone::MediumLight),
-            ("medium", SkinTone::Medium),
-            ("medium-dark", SkinTone::MediumDark),
-            ("dark", SkinTone::Dark),
-        ];
-        for (name, tone) in cases {
-            let options = serde_json::json!({ "skin_tone": name });
-            assert_eq!(skin_tone_setting(Some(&options)), tone, "{name}");
-        }
-    }
-
-    #[test]
-    fn missing_skin_tone_is_default() {
-        assert_eq!(skin_tone_setting(None), SkinTone::Default);
-        let options = serde_json::json!({});
-        assert_eq!(skin_tone_setting(Some(&options)), SkinTone::Default);
-    }
-
-    #[test]
-    fn unknown_skin_tone_is_default() {
-        let options = serde_json::json!({ "skin_tone": "purple" });
-        assert_eq!(skin_tone_setting(Some(&options)), SkinTone::Default);
-        let options = serde_json::json!({ "skin_tone": 3 });
-        assert_eq!(skin_tone_setting(Some(&options)), SkinTone::Default);
-    }
-
-    #[test]
     fn inserts_emoji_with_skin_tone() {
         let documents = HashMap::from([(URI.to_string(), ":thumbsup".to_string())]);
-        let response = handle_completion(&documents, completion_params(9), SkinTone::Dark);
+        let response = handle_completion(
+            &documents,
+            completion_params(9),
+            &Settings {
+                skin_tone: SkinTone::Dark,
+                ..Settings::default()
+            },
+        );
         let Some(CompletionResponse::List(list)) = response else {
             panic!("expected a completion list, got {response:?}");
         };

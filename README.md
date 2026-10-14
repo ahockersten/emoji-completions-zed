@@ -15,12 +15,12 @@ Emojis that come in skin tones are inserted with the tone set in your Zed `setti
 ```json
 "lsp": {
   "emoji-language-server": {
-    "initialization_options": { "skin_tone": "medium-dark" }
+    "settings": { "skin_tone": "medium-dark" }
   }
 }
 ```
 
-The values are `default` (yellow, used when the setting is missing), `light`, `medium-light`, `medium`, `medium-dark` and `dark`. Run `editor: restart language server` after changing it.
+The values are `default` (yellow, used when the setting is missing), `light`, `medium-light`, `medium`, `medium-dark` and `dark`.
 
 ## Turning it off for a language
 
