@@ -1,0 +1,20 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "timezone": "Europe/Stockholm",
+  "schedule": ["before 6am on monday"],
+  "dependencyDashboard": true,
+  "prHourlyLimit": 0,
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 6am on monday"]
+  },
+  "packageRules": [
+    {
+      "description": "Artifacts uploaded by one major can't be downloaded by another, so these move together.",
+      "matchManagers": ["github-actions"],
+      "matchPackageNames": ["actions/upload-artifact", "actions/download-artifact"],
+      "groupName": "artifact actions"
+    }
+  ]
+}
