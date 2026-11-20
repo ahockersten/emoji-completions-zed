@@ -37,6 +37,7 @@ languages = [
     "Scala",
     "Perl",
     "R",
+    "Quarto",
     "Lua",
     "Clojure",
     "Elixir",
