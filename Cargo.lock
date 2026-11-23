@@ -81,14 +81,14 @@ dependencies = [
 
 [[package]]
 name = "emoji-completions"
-version = "1.4.1"
+version = "1.5.0"
 dependencies = [
  "zed_extension_api",
 ]
 
 [[package]]
 name = "emoji-language-server"
-version = "1.4.1"
+version = "1.5.0"
 dependencies = [
  "emojis",
  "line-index",
