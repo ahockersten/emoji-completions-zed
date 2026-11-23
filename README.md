@@ -30,7 +30,7 @@ Choose the styles in your Zed `settings.json`:
 }
 ```
 
-An empty list turns completions off. Turning on `emojisense` makes `::` at the start of a word trigger completions, as in C++'s `::std::vector`, and turning on `teams` does the same for `(`, as in `if (x`.
+An empty list turns completions off. Turning on `emojisense` makes `::` at the start of a word trigger completions, and turning on `teams` does the same for `(`. This can be really annoying in many cases, because they will trigger completions in places you might not want, as in C++'s `::std::vector`, or `if (x`.
 
 ## Skin tone
 
@@ -77,15 +77,15 @@ Zed only starts the server for languages listed in `extension.toml`, so it canno
 
 ## Making a release
 
-This project uses immutable tags, which makes releasing a new version a bit more complicated than it would otherwise be.
+This project uses immutable releases: once a release is published, its tag can't be moved and no binaries can be added to it. The release workflow therefore uploads the binaries to a draft release, which you publish afterwards. Never create a release by hand (in the GitHub UI or with `gh release create`) before the workflow has run, or it is published without binaries and the version can't be fixed.
 
-1. Bump the version in `Cargo.toml` and `extension.toml`, name the new version something like `1.0.0-beta0`.
+1. Bump the version in `Cargo.toml` and `extension.toml`, name the new version something like `1.0.0-beta0`, run `cargo update -w` to update `Cargo.lock`, and commit.
 2. Tag a pre-release in git:
-  ```sh
-  git tag 1.0.0-beta0
-  git push origin 1.0.0-beta0
-  ```
-3. The release will now be built, but it will be marked as a draft. Mark the build as a pre-release in the GitHub UI.
+   ```sh
+   git tag 1.0.0-beta0
+   git push origin 1.0.0-beta0
+   ```
+3. The release workflow builds the binaries and uploads them to a draft release. Once it has finished, check that the draft has all five binaries, then publish it as a pre-release in the GitHub UI.
 4. Build locally with `cargo build --release -p emoji-language-server`.
 5. Remove any downloaded `emoji-language-server` binaries from the Zed extensions directory, and remove the `lsp` setting from "Developing locally" if you added it:
    ```sh
@@ -97,12 +97,12 @@ This project uses immutable tags, which makes releasing a new version a bit more
 6. Use the `zed: install dev extension` command in Zed to install the extension from the local path.
 7. Restart all language servers in Zed, this should trigger the new version to be used.
 8. Test that everything works as expected.
-9. Once verified, bump the version in `Cargo.toml` and `extension.toml` to the stable version, e.g., `1.0.0`, commit, and tag it. The release workflow fails if the tag does not match both files.
+9. Once verified, bump the version in `Cargo.toml` and `extension.toml` to the stable version, e.g., `1.0.0`, run `cargo update -w`, commit, push, and tag it. The release workflow fails if the tag does not match both files.
    ```sh
    git tag 1.0.0
    git push origin 1.0.0
    ```
-10. Publish this release as the latest release
+10. Wait for the release workflow to finish, check that the draft release has all five binaries, add release notes, and publish it as the latest release.
 11. Update the zed-extensions repo to point to the new version, in accordance with their instructions: https://zed.dev/docs/extensions/developing-extensions#updating-an-extension
 
 ## Possible improvements (PRs welcome!)
